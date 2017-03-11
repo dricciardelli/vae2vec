@@ -1,0 +1,8 @@
+To open this file and get the definitions, do something like this in python:
+
+import pickle
+with open('training_data.pkl') as raw:
+    words,definitions = pickle.load(raw)
+
+words: a list of target words
+definitions: a list (same length) of corresponding definitions
