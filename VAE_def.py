@@ -1,0 +1,290 @@
+''' Significant lifting from https://jmetzen.github.io/2015-11-27/vae.html '''
+
+import numpy as np
+import tensorflow as tf
+
+import matplotlib.pyplot as plt
+
+import re, string
+from sklearn.feature_extraction.text import CountVectorizer
+
+def load_text():
+	fname = 'Oxford_English_Dictionary.txt'
+	txt = []
+	with open(fname) as f:
+		txt = f.readlines()
+
+	txt = [x.strip() for x in txt]
+	txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
+
+	# List of words
+	word_list = [x.split(' ', 1)[0].strip() for x in txt]
+	# List of definitions
+	def_list = [x.split(' ', 1)[1].strip()for x in txt]
+
+	# Initialize the "CountVectorizer" object, which is scikit-learn's
+	# bag of words tool.  
+	vectorizer = CountVectorizer(analyzer = "word",   \
+	                             tokenizer = None,    \
+	                             preprocessor = None, \
+	                             stop_words = None,   \
+	                             max_features = None, \
+	                             token_pattern='\\b\\w+\\b') # Keep single character words
+
+	vectorizer.fit(word_list+def_list)
+
+	# X = (36665, 56210)
+	X = vectorizer.transform(word_list).toarray()
+	# y = (36665, 56210)
+	y = vectorizer.transform(def_list).toarray()
+
+	return X, y
+
+def xavier_init(fan_in, fan_out, constant=1): 
+    """ Xavier initialization of network weights"""
+    # https://stackoverflow.com/questions/33640581/how-to-do-xavier-initialization-on-tensorflow
+    low = -constant*np.sqrt(6.0/(fan_in + fan_out)) 
+    high = constant*np.sqrt(6.0/(fan_in + fan_out))
+    return tf.random_uniform((fan_in, fan_out), 
+                             minval=low, maxval=high, 
+                             dtype=tf.float32)
+
+class VariationalAutoencoder(object):
+    """ Variation Autoencoder (VAE) with an sklearn-like interface implemented using TensorFlow.
+    
+    This implementation uses probabilistic encoders and decoders using Gaussian 
+    distributions and  realized by multi-layer perceptrons. The VAE can be learned
+    end-to-end.
+    
+    See "Auto-Encoding Variational Bayes" by Kingma and Welling for more details.
+    """
+    def __init__(self, network_architecture, transfer_fct=tf.nn.softplus, 
+                 learning_rate=0.001, batch_size=100):
+        self.network_architecture = network_architecture
+        self.transfer_fct = transfer_fct
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        
+        # tf Graph input
+        self.n_words=network_architecture['n_input']
+        self.x = tf.placeholder(tf.float32, [None, network_architecture["n_input"]])
+        self.intype=type(self.x)
+        self.caption_placeholder = tf.placeholder(tf.float32, [None, network_architecture["maxlen"]])
+        self.mask=tf.placeholder(tf.float32, [None, network_architecture["maxlen"]])
+        
+        # Create autoencoder network
+        self._create_network()
+        # Define loss function based variational upper-bound and 
+        # corresponding optimizer
+        self._create_loss_optimizer()
+        
+        # Initializing the tensor flow variables
+        init = tf.global_variables_initializer()
+
+        # Launch the session
+        self.sess = tf.InteractiveSession()
+        self.sess.run(init)
+    
+    def _create_network(self):
+        # Initialize autoencode network weights and biases
+        network_weights = self._initialize_weights(**self.network_architecture)
+
+        # Use recognition network to determine mean and 
+        # (log) variance of Gaussian distribution in latent
+        # space
+        input_embedding,input_embedding_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'])
+
+        state = self.lstm.zero_state(self.batch_size, dtype=tf.float32)
+
+        loss = input_embedding_KLD_loss
+        with tf.variable_scope("RNN"):
+            for i in range(self.network_architecture['maxlen']): 
+                if i > 0:
+                    with tf.device("/cpu:0"):
+                        # current_embedding = tf.nn.embedding_lookup(self.word_embedding, caption_placeholder[:,i-1]) + self.embedding_bias
+                        current_embedding,KLD_loss = self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'], caption_placeholder[:,i-1])
+                        loss+=KLD_loss
+                else:
+                     current_embedding = input_embedding
+                if i > 0: 
+                    tf.get_variable_scope().reuse_variables()
+
+                out, state = self.lstm(current_embedding, state)
+
+                
+                if i > 0: 
+                    labels = tf.expand_dims(caption_placeholder[:, i], 1)
+                    ix_range=tf.range(0, self.batch_size, 1)
+                    ixs = tf.expand_dims(ix_range, 1)
+                    concat = tf.concat([ixs, labels],1)
+                    onehot = tf.sparse_to_dense(
+                            concat, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
+
+                    logit = tf.matmul(out, network_weights['LSTM']['encoding_weight']) + network_weights['LSTM']['encoding_bias']
+                    xentropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit, labels=onehot)
+                    xentropy = xentropy * mask[:,i]
+
+                    loss += tf.reduce_sum(xentropy)
+
+            loss = loss / tf.reduce_sum(mask[:,1:])
+            self.loss=loss
+    
+    def _initialize_weights(self, n_hidden_recog_1, n_hidden_recog_2, 
+                            n_hidden_gener_1,  n_hidden_gener_2, 
+                            n_input, n_z):
+        all_weights = dict()
+        all_weights['input_meaning'] = {
+            'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input)),
+            'affine_bias': tf.Variable(tf.zeros(n_lstm_input))}
+        all_weights['biases_variational_encoding'] = {
+            'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32)),
+            'out_log_sigma': tf.Variable(tf.zeros([n_z], dtype=tf.float32))}
+        all_weights['variational_encoding'] = {
+            'out_mean': tf.Variable(xavier_init(n_input, n_z)),
+            'out_log_sigma': tf.Variable(xavier_init(n_input, n_z))}
+        self.lstm=tf.contrib.rnn.BasicLSTMCell(n_lstm_input)
+        all_weights['LSTM'] = {
+            'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input)),
+            'affine_bias': tf.Variable(tf.zeros(n_lstm_input)),
+            'encoding_weight': tf.Variable(xavier_init(n_lstm_input,n_input))
+            'encoding_bias': tf.Variable(tf.zeros(n_input)),
+            'lstm': self.lstm}
+        return all_weights
+    
+    def _get_input_embedding(self, ve_weights, aff_weights):
+        z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],self.x)
+        embedding=tf.matmul(z,aff_weights['affine_weight'])+aff_weights['affine_bias']
+        return embedding,vae_loss
+
+    def _get_word_embedding(self, ve_weights, lstm_weights, x):
+        z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x)
+        embedding=tf.matmul(z,aff_weights['affine_weight'])+aff_weights['affine_bias']
+        return embedding,vae_loss
+    
+
+    def _vae_sample(self, weights, biases, x):
+            #TODO: consider adding a linear transform layer+relu or softplus here first 
+            if type(x)==self.intype:
+                mu=tf.matmul(x,weights['out_mean'])+biases['out_mean']
+                logvar=tf.matmul(x,weights['out_log_sigma'])+biases['out_log_sigma']
+            else:
+                mu=tf.nn.embedding_lookup(weights['out_mean'],x)+biases['out_mean']
+                logvar=tf.nn.embedding_lookup(weights['out_log_sigma'],x)+biases['out_log_sigma']
+            epsilon=tf.random_normal(tf.shape(logvar),name='epsilon')
+            std=tf.exp(.5*logvar)
+            z=mu+tf.mul(std,epsilon)
+            KLD = -0.5 * tf.reduce_sum(1 + logvar - tf.pow(mu, 2) - tf.exp(logvar), reduction_indices=1)
+            return z,KLD
+
+    def _create_loss_optimizer(self):
+        # The loss is composed of two terms:
+        # 1.) The reconstruction loss (the negative log probability
+        #     of the input under the reconstructed Bernoulli distribution 
+        #     induced by the decoder in the data space).
+        #     This can be interpreted as the number of "nats" required
+        #     for reconstructing the input when the activation in latent
+        #     is given.
+        # Adding 1e-10 to avoid evaluation of log(0.0)
+        reconstr_loss = \
+            -tf.reduce_sum(self.y * tf.log(1e-10 + self.x_reconstr_mean)
+                           + (1-self.y) * tf.log(1e-10 + 1 - self.x_reconstr_mean),
+                           1)
+        # 2.) The latent loss, which is defined as the Kullback Leibler divergence 
+        ##    between the distribution in latent space induced by the encoder on 
+        #     the data and some prior. This acts as a kind of regularizer.
+        #     This can be interpreted as the number of "nats" required
+        #     for transmitting the the latent space distribution given
+        #     the prior.
+        latent_loss = -0.5 * tf.reduce_sum(1 + self.z_log_sigma_sq 
+                                           - tf.square(self.z_mean) 
+                                           - tf.exp(self.z_log_sigma_sq), 1)
+        self.cost = tf.reduce_mean(reconstr_loss + latent_loss)   # average over batch
+        # Use ADAM optimizer
+        self.optimizer = \
+            tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+        
+    def partial_fit(self, X):
+        """Train model based on mini-batch of input data.
+        
+        Return cost of mini-batch.
+        """
+        opt, cost = self.sess.run((self.optimizer, self.cost), 
+                                  feed_dict={self.x: X, self.y: y})
+        return cost
+    
+    def transform(self, X):
+        """Transform data by mapping it into the latent space."""
+        # Note: This maps to mean of distribution, we could alternatively
+        # sample from Gaussian distribution
+        return self.sess.run(self.z_mean, feed_dict={self.x: X, self.y: y})
+    
+    def generate(self, z_mu=None):
+        """ Generate data by sampling from latent space.
+        
+        If z_mu is not None, data for this point in latent space is
+        generated. Otherwise, z_mu is drawn from prior in latent 
+        space.        
+        """
+        if z_mu is None:
+            z_mu = np.random.normal(size=self.network_architecture["n_z"])
+        # Note: This maps to mean of distribution, we could alternatively
+        # sample from Gaussian distribution
+        return self.sess.run(self.x_reconstr_mean, 
+                             feed_dict={self.z: z_mu})
+    
+    def reconstruct(self, X):
+        """ Use VAE to reconstruct given data. """
+        return self.sess.run(self.x_reconstr_mean, 
+                             feed_dict={self.x: X, self.y: Y})
+
+def train(network_architecture, learning_rate=0.001,
+          batch_size=100, training_epochs=10, display_step=5):
+    vae = VariationalAutoencoder(network_architecture, 
+                                 learning_rate=learning_rate, 
+                                 batch_size=batch_size)
+    # Training cycle
+    for epoch in range(training_epochs):
+        avg_cost = 0.
+        total_batch = int(n_samples / batch_size)
+        # Loop over all batches
+        for i in range(total_batch):
+            batch_xs = X[:n_samples, :]
+
+            # Fit training using batch data
+            cost = vae.partial_fit(batch_xs)
+            # Compute average loss
+            avg_cost += cost / n_samples * batch_size
+
+        # Display logs per epoch step
+        if epoch % display_step == 0:
+            print("Epoch:", '%04d' % (epoch+1), 
+                  "cost=", "{:.9f}".format(avg_cost))
+    return vae
+
+if __name__ == "__main__":
+
+	X, y = load_text()
+
+	n_input = X.shape[1]
+	n_samples = 500
+
+	X, y = X[:n_samples, :], y[:n_samples, :]
+
+	network_architecture = \
+	    dict(n_hidden_recog_1=500, # 1st layer encoder neurons
+	         n_hidden_recog_2=500, # 2nd layer encoder neurons
+	         n_hidden_gener_1=500, # 1st layer decoder neurons
+	         n_hidden_gener_2=500, # 2nd layer decoder neurons
+	         n_input=n_input, # One hot encoding input
+	         n_z=20)  # dimensionality of latent space
+
+	vae_2d = train(network_architecture, training_epochs=75, batch_size=500)
+
+	x_sample = X
+	y_sample = y
+	z_mu = vae_2d.transform(x_sample)
+	plt.figure(figsize=(8, 6)) 
+	plt.scatter(z_mu[:, 0], z_mu[:, 1], c=np.argmax(y_sample, 1))
+	plt.colorbar()
+	plt.grid()
+	plt.show()
