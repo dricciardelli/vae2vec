@@ -69,7 +69,7 @@ class VariationalAutoencoder(object):
         self.n_words=network_architecture['n_input']
         self.x = tf.placeholder(tf.float32, [None, network_architecture["n_input"]])
         self.intype=type(self.x)
-        self.caption_placeholder = tf.placeholder(tf.float32, [None, network_architecture["maxlen"]])
+        self.caption_placeholder = tf.placeholder(tf.int32, [None, network_architecture["maxlen"]])
         self.mask=tf.placeholder(tf.float32, [None, network_architecture["maxlen"]])
         
         # Create autoencoder network
@@ -122,14 +122,14 @@ class VariationalAutoencoder(object):
 
                     logit = tf.matmul(out, network_weights['LSTM']['encoding_weight']) + network_weights['LSTM']['encoding_bias']
                     xentropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit, labels=onehot)
-                    xentropy = xentropy * mask[:,i]
+                    xentropy = xentropy * self.mask[:,i]
 
                     loss += tf.reduce_sum(xentropy)
 
-            loss = loss / tf.reduce_sum(mask[:,1:])
+            loss = loss / tf.reduce_sum(self.mask[:,1:])
             self.loss=loss
     
-    def _initialize_weights(self, n_lstm_input,  
+    def _initialize_weights(self, n_lstm_input, maxlen, 
                             n_input, n_z):
         all_weights = dict()
         all_weights['input_meaning'] = {
@@ -145,7 +145,7 @@ class VariationalAutoencoder(object):
         all_weights['LSTM'] = {
             'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input)),
             'affine_bias': tf.Variable(tf.zeros(n_lstm_input)),
-            'encoding_weight': tf.Variable(xavier_init(n_lstm_input,n_input))
+            'encoding_weight': tf.Variable(xavier_init(n_lstm_input,n_input)),
             'encoding_bias': tf.Variable(tf.zeros(n_input)),
             'lstm': self.lstm}
         return all_weights
@@ -156,14 +156,14 @@ class VariationalAutoencoder(object):
         return embedding,vae_loss
 
     def _get_word_embedding(self, ve_weights, lstm_weights, x):
-        z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x)
-        embedding=tf.matmul(z,aff_weights['affine_weight'])+aff_weights['affine_bias']
+        z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x, True)
+        embedding=tf.matmul(z,lstm_weights['affine_weight'])+lstm_weights['affine_bias']
         return embedding,vae_loss
     
 
-    def _vae_sample(self, weights, biases, x):
+    def _vae_sample(self, weights, biases, x, lookup=False):
             #TODO: consider adding a linear transform layer+relu or softplus here first 
-            if type(x)==self.intype:
+            if not lookup:
                 mu=tf.matmul(x,weights['out_mean'])+biases['out_mean']
                 logvar=tf.matmul(x,weights['out_log_sigma'])+biases['out_log_sigma']
             else:
@@ -171,7 +171,7 @@ class VariationalAutoencoder(object):
                 logvar=tf.nn.embedding_lookup(weights['out_log_sigma'],x)+biases['out_log_sigma']
             epsilon=tf.random_normal(tf.shape(logvar),name='epsilon')
             std=tf.exp(.5*logvar)
-            z=mu+tf.mul(std,epsilon)
+            z=mu+tf.multiply(std,epsilon)
             KLD = -0.5 * tf.reduce_sum(1 + logvar - tf.pow(mu, 2) - tf.exp(logvar), reduction_indices=1)
             return z,KLD
 
@@ -205,22 +205,22 @@ def train(network_architecture, learning_rate=0.001,
                                  learning_rate=learning_rate, 
                                  batch_size=batch_size)
     # Training cycle
-    for epoch in range(training_epochs):
-        avg_cost = 0.
-        total_batch = int(n_samples / batch_size)
-        # Loop over all batches
-        for i in range(total_batch):
-            batch_xs = X[:n_samples, :]
+    # for epoch in range(training_epochs):
+    #     avg_cost = 0.
+    #     total_batch = int(n_samples / batch_size)
+    #     # Loop over all batches
+    #     for i in range(total_batch):
+    #         batch_xs = X[:n_samples, :]
 
-            # Fit training using batch data
-            cost = vae.partial_fit(batch_xs)
-            # Compute average loss
-            avg_cost += cost / n_samples * batch_size
+    #         # Fit training using batch data
+    #         cost = vae.partial_fit(batch_xs)
+    #         # Compute average loss
+    #         avg_cost += cost / n_samples * batch_size
 
-        # Display logs per epoch step
-        if epoch % display_step == 0:
-            print("Epoch:", '%04d' % (epoch+1), 
-                  "cost=", "{:.9f}".format(avg_cost))
+    #     # Display logs per epoch step
+    #     if epoch % display_step == 0:
+    #         print("Epoch:", '%04d' % (epoch+1), 
+    #               "cost=", "{:.9f}".format(avg_cost))
     return vae
 
 if __name__ == "__main__":
@@ -229,23 +229,24 @@ if __name__ == "__main__":
 
 	n_input = X.shape[1]
 	n_samples = 500
+	lstm_dim=128
 
 	X, y = X[:n_samples, :], y[:n_samples, :]
 
 	network_architecture = \
 	    dict(maxlen=30, # 2nd layer decoder neurons
 	         n_input=n_input, # One hot encoding input
-             n_lstm_input=n_lstm_input, # LSTM cell size
+             n_lstm_input=lstm_dim, # LSTM cell size
 	         n_z=20, # dimensionality of latent space
              )  
 
 	vae_2d = train(network_architecture, training_epochs=75, batch_size=500)
 
-	x_sample = X
-	y_sample = y
-	z_mu = vae_2d.transform(x_sample)
-	plt.figure(figsize=(8, 6)) 
-	plt.scatter(z_mu[:, 0], z_mu[:, 1], c=np.argmax(y_sample, 1))
-	plt.colorbar()
-	plt.grid()
-	plt.show()
+	# x_sample = X
+	# y_sample = y
+	# z_mu = vae_2d.transform(x_sample)
+	# plt.figure(figsize=(8, 6)) 
+	# plt.scatter(z_mu[:, 0], z_mu[:, 1], c=np.argmax(y_sample, 1))
+	# plt.colorbar()
+	# plt.grid()
+	# plt.show()
