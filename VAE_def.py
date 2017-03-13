@@ -102,7 +102,7 @@ class VariationalAutoencoder(object):
                 if i > 0:
                     with tf.device("/cpu:0"):
                         # current_embedding = tf.nn.embedding_lookup(self.word_embedding, caption_placeholder[:,i-1]) + self.embedding_bias
-                        current_embedding,KLD_loss = self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'], caption_placeholder[:,i-1])
+                        current_embedding,KLD_loss = self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'], self.caption_placeholder[:,i-1])
                         loss+=KLD_loss
                 else:
                      current_embedding = input_embedding
@@ -113,7 +113,7 @@ class VariationalAutoencoder(object):
 
                 
                 if i > 0: 
-                    labels = tf.expand_dims(caption_placeholder[:, i], 1)
+                    labels = tf.expand_dims(self.caption_placeholder[:, i], 1)
                     ix_range=tf.range(0, self.batch_size, 1)
                     ixs = tf.expand_dims(ix_range, 1)
                     concat = tf.concat([ixs, labels],1)
@@ -129,8 +129,7 @@ class VariationalAutoencoder(object):
             loss = loss / tf.reduce_sum(mask[:,1:])
             self.loss=loss
     
-    def _initialize_weights(self, n_hidden_recog_1, n_hidden_recog_2, 
-                            n_hidden_gener_1,  n_hidden_gener_2, 
+    def _initialize_weights(self, n_lstm_input,  
                             n_input, n_z):
         all_weights = dict()
         all_weights['input_meaning'] = {
@@ -177,65 +176,28 @@ class VariationalAutoencoder(object):
             return z,KLD
 
     def _create_loss_optimizer(self):
-        # The loss is composed of two terms:
-        # 1.) The reconstruction loss (the negative log probability
-        #     of the input under the reconstructed Bernoulli distribution 
-        #     induced by the decoder in the data space).
-        #     This can be interpreted as the number of "nats" required
-        #     for reconstructing the input when the activation in latent
-        #     is given.
-        # Adding 1e-10 to avoid evaluation of log(0.0)
-        reconstr_loss = \
-            -tf.reduce_sum(self.y * tf.log(1e-10 + self.x_reconstr_mean)
-                           + (1-self.y) * tf.log(1e-10 + 1 - self.x_reconstr_mean),
-                           1)
-        # 2.) The latent loss, which is defined as the Kullback Leibler divergence 
-        ##    between the distribution in latent space induced by the encoder on 
-        #     the data and some prior. This acts as a kind of regularizer.
-        #     This can be interpreted as the number of "nats" required
-        #     for transmitting the the latent space distribution given
-        #     the prior.
-        latent_loss = -0.5 * tf.reduce_sum(1 + self.z_log_sigma_sq 
-                                           - tf.square(self.z_mean) 
-                                           - tf.exp(self.z_log_sigma_sq), 1)
-        self.cost = tf.reduce_mean(reconstr_loss + latent_loss)   # average over batch
-        # Use ADAM optimizer
         self.optimizer = \
-            tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+            tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss)
         
-    def partial_fit(self, X):
-        """Train model based on mini-batch of input data.
+    
+    # def generate(self, z_mu=None):
+    #     """ Generate data by sampling from latent space.
         
-        Return cost of mini-batch.
-        """
-        opt, cost = self.sess.run((self.optimizer, self.cost), 
-                                  feed_dict={self.x: X, self.y: y})
-        return cost
+    #     If z_mu is not None, data for this point in latent space is
+    #     generated. Otherwise, z_mu is drawn from prior in latent 
+    #     space.        
+    #     """
+    #     if z_mu is None:
+    #         z_mu = np.random.normal(size=self.network_architecture["n_z"])
+    #     # Note: This maps to mean of distribution, we could alternatively
+    #     # sample from Gaussian distribution
+    #     return self.sess.run(self.x_reconstr_mean, 
+    #                          feed_dict={self.z: z_mu})
     
-    def transform(self, X):
-        """Transform data by mapping it into the latent space."""
-        # Note: This maps to mean of distribution, we could alternatively
-        # sample from Gaussian distribution
-        return self.sess.run(self.z_mean, feed_dict={self.x: X, self.y: y})
-    
-    def generate(self, z_mu=None):
-        """ Generate data by sampling from latent space.
-        
-        If z_mu is not None, data for this point in latent space is
-        generated. Otherwise, z_mu is drawn from prior in latent 
-        space.        
-        """
-        if z_mu is None:
-            z_mu = np.random.normal(size=self.network_architecture["n_z"])
-        # Note: This maps to mean of distribution, we could alternatively
-        # sample from Gaussian distribution
-        return self.sess.run(self.x_reconstr_mean, 
-                             feed_dict={self.z: z_mu})
-    
-    def reconstruct(self, X):
-        """ Use VAE to reconstruct given data. """
-        return self.sess.run(self.x_reconstr_mean, 
-                             feed_dict={self.x: X, self.y: Y})
+    # def reconstruct(self, X):
+    #     """ Use VAE to reconstruct given data. """
+    #     return self.sess.run(self.x_reconstr_mean, 
+    #                          feed_dict={self.x: X, self.y: Y})
 
 def train(network_architecture, learning_rate=0.001,
           batch_size=100, training_epochs=10, display_step=5):
@@ -271,12 +233,11 @@ if __name__ == "__main__":
 	X, y = X[:n_samples, :], y[:n_samples, :]
 
 	network_architecture = \
-	    dict(n_hidden_recog_1=500, # 1st layer encoder neurons
-	         n_hidden_recog_2=500, # 2nd layer encoder neurons
-	         n_hidden_gener_1=500, # 1st layer decoder neurons
-	         n_hidden_gener_2=500, # 2nd layer decoder neurons
+	    dict(maxlen=30, # 2nd layer decoder neurons
 	         n_input=n_input, # One hot encoding input
-	         n_z=20)  # dimensionality of latent space
+             n_lstm_input=n_lstm_input, # LSTM cell size
+	         n_z=20, # dimensionality of latent space
+             )  
 
 	vae_2d = train(network_architecture, training_epochs=75, batch_size=500)
 
