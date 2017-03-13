@@ -138,7 +138,7 @@ class VariationalAutoencoder(object):
 
 		# Launch the session
 		self.sess = tf.InteractiveSession()
-		saver = tf.train.Saver(max_to_keep=100)
+		self.saver = tf.train.Saver(max_to_keep=100)
 		self.sess.run(init)
 	
 	def _create_network(self):
@@ -283,9 +283,9 @@ def train(network_architecture, learning_rate=0.001,
 			# Compute average loss
 			avg_cost += np.sum(cost) / n_samples * batch_size
 
-		saver.save(sess, './models/model')
+		vae.saver.save(vae.sess, './models/model')
 		costs.append(avg_cost)
-		pkl.dump(costs,open('20_results.pkl','wb'))
+		pkl.dump(costs,open('20_256_results.pkl','wb'))
 		# Display logs per epoch step
 		if epoch % display_step == 0:
 			print("Epoch:", '%04d' % (epoch+1), 
@@ -298,7 +298,7 @@ if __name__ == "__main__":
 
 	n_input = 1003
 	n_samples = 500
-	lstm_dim=128
+	lstm_dim=256
 
 	X, y = X[:n_samples, :], y[:n_samples, :]
 
@@ -309,7 +309,7 @@ if __name__ == "__main__":
 			 n_z=20, # dimensionality of latent space
 			 )  
 
-	vae_2d = train(network_architecture, training_epochs=75, batch_size=500)
+	vae_2d = train(network_architecture, training_epochs=300, batch_size=500)
 
 	# x_sample = X
 	# y_sample = y
