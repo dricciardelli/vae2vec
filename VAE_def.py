@@ -1,5 +1,6 @@
 ''' Significant lifting from https://jmetzen.github.io/2015-11-27/vae.html '''
-
+import time
+time.sleep(3600)
 import numpy as np
 import tensorflow as tf
 
@@ -285,7 +286,7 @@ def train(network_architecture, learning_rate=0.001,
 
 		vae.saver.save(vae.sess, './models/model')
 		costs.append(avg_cost)
-		pkl.dump(costs,open('20_256_results.pkl','wb'))
+		pkl.dump(costs,open('50_256_results.pkl','wb'))
 		# Display logs per epoch step
 		if epoch % display_step == 0:
 			print("Epoch:", '%04d' % (epoch+1), 
@@ -306,7 +307,7 @@ if __name__ == "__main__":
 		dict(maxlen=32, # 2nd layer decoder neurons
 			 n_input=n_input, # One hot encoding input
 			 n_lstm_input=lstm_dim, # LSTM cell size
-			 n_z=20, # dimensionality of latent space
+			 n_z=50, # dimensionality of latent space
 			 )  
 
 	vae_2d = train(network_architecture, training_epochs=300, batch_size=500)
