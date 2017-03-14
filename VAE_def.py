@@ -1,6 +1,6 @@
 ''' Significant lifting from https://jmetzen.github.io/2015-11-27/vae.html '''
 import time
-time.sleep(3600)
+#time.sleep(3600) LOL why
 import numpy as np
 import tensorflow as tf
 
@@ -293,8 +293,7 @@ def train(network_architecture, learning_rate=0.001,
 				  "cost=", avg_cost)
 	return vae
 
-if __name__ == "__main__":
-
+def main():
 	X, y, mask = load_text(1000,1000)
 
 	n_input = 1003
@@ -320,3 +319,6 @@ if __name__ == "__main__":
 	# plt.colorbar()
 	# plt.grid()
 	# plt.show()
+
+if __name__ == "__main__":
+	main()
