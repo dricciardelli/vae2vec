@@ -41,7 +41,7 @@ def load_text(n,num_samples=None):
 	#                              max_features = None, \
 	#                              token_pattern='\\b\\w+\\b') # Keep single character words
 
-	_map=get_one_hot_map(word_list+def_list,n)
+	_map,rev_map=get_one_hot_map(word_list+def_list,n)
 	if num_samples is not None:
 		num_samples=len(word_list)
 	# X = (36665, 56210)
@@ -50,7 +50,7 @@ def load_text(n,num_samples=None):
 	# y = (36665, 56210)
 	y,mask = map_one_hot(def_list[:num_samples],_map,maxlen,n)
 	print (np.max(y))
-	return X, y, mask
+	return X, y, mask,rev_map
 
 def get_one_hot_map(corpus,n):
 	counts=defaultdict(int)
@@ -58,12 +58,17 @@ def get_one_hot_map(corpus,n):
 		for word in line.split():
 			counts[word]+=1
 	_map=defaultdict(lambda :n+1)
+	rev_map={}
 	words=list(sorted(counts.items(),key=lambda x:x[1]))[:n]
 	i=0
 	for word,count in words:
 		i+=1
 		_map[word]=i
-	return _map
+		rev_map[i]=word
+	rev_map[n+1]='<UNK>'
+	rev_map[0]='Start'
+	rev_map[n+2]='End'
+	return _map,rev_map
 
 def map_one_hot(corpus,_map,maxlen,n):
 	if maxlen==1:
@@ -144,7 +149,7 @@ class VariationalAutoencoder(object):
 	def _create_network(self):
 		# Initialize autoencode network weights and biases
 		network_weights = self._initialize_weights(**self.network_architecture)
-
+		self.network_weights=network_weights
 		# Use recognition network to determine mean and 
 		# (log) variance of Gaussian distribution in latent
 		# space
@@ -245,24 +250,69 @@ class VariationalAutoencoder(object):
 								  feed_dict={self.x: X, self.caption_placeholder: y, self.mask: mask})
 		return cost
 		
-	# def generate(self, z_mu=None):
-	#     """ Generate data by sampling from latent space.
+	def _build_gen(self):
+		#same setup as `_create_network` function 
+		input_embedding,_=self._get_input_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['input_meaning'])
+        # image_embedding = tf.matmul(img, self.img_embedding) + self.img_embedding_bias
+        state = self.lstm.zero_state(self.batch_size,dtype=tf.float32)
+
+        #declare list to hold the words of our generated captions
+        all_words = []
+        with tf.variable_scope("RNN"):
+            # in the first iteration we have no previous word, so we directly pass in the image embedding
+            # and set the `previous_word` to the embedding of the start token ([0]) for the future iterations
+            output, state = self.lstm(image_embedding, state)
+            previous_word,_ = self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'], [0])
+            # previous_word = tf.nn.embedding_lookup(self.word_embedding, [0]) + self.embedding_bias
+
+            for i in range(self.network_architecture['maxlen']):
+                tf.get_variable_scope().reuse_variables()
+
+                out, state = self.lstm(previous_word, state)
+
+
+                # get a one-hot word encoding from the output of the LSTM
+                logit = tf.matmul(out, self.word_encoding) + self.word_encoding_bias
+                best_word = tf.argmax(logit, 1)
+
+                # with tf.device("/cpu:0"):
+                #     # get the embedding of the best_word to use as input to the next iteration of our LSTM 
+                #     previous_word = tf.nn.embedding_lookup(self.word_embedding, best_word)
+
+                # previous_word += self.embedding_bias
+
+                previous_word,_ = self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'], [best_word])
+
+                all_words.append(best_word)
+
+        self.generated_words=all_words
+
+	def generate(self, _map, x):
+	    """ Generate data by sampling from latent space.
 		
-	#     If z_mu is not None, data for this point in latent space is
-	#     generated. Otherwise, z_mu is drawn from prior in latent 
-	#     space.        
-	#     """
-	#     if z_mu is None:
-	#         z_mu = np.random.normal(size=self.network_architecture["n_z"])
-	#     # Note: This maps to mean of distribution, we could alternatively
-	#     # sample from Gaussian distribution
-	#     return self.sess.run(self.x_reconstr_mean, 
-	#                          feed_dict={self.z: z_mu})
+	    If z_mu is not None, data for this point in latent space is
+	    generated. Otherwise, z_mu is drawn from prior in latent 
+	    space.        
+	    # """
+	    # if z_mu is None:
+	    #     z_mu = np.random.normal(size=self.network_architecture["n_z"])
+	    # # Note: This maps to mean of distribution, we could alternatively
+	    # # sample from Gaussian distribution
+	    # return self.sess.run(self.x_reconstr_mean, 
+	    #                      feed_dict={self.z: z_mu})
+	    
+	    saver = tf.train.Saver()
+	    saver.restore(sess, tf.train.latest_checkpoint(model_path))
+
+	    generated_word_index= sess.run(self.generated_words, feed_dict={self.x:x})
+	    generated_word_index = np.hstack(generated_word_index)
+
+	    generated_sentence = ixtoword(_map,generated_word_index)
+	    return generated_sentence
+
+def ixtoword(_map,ixs):
+	return [_map[x] for x in ixs]
 	
-	# def reconstruct(self, X):
-	#     """ Use VAE to reconstruct given data. """
-	#     return self.sess.run(self.x_reconstr_mean, 
-	#                          feed_dict={self.x: X, self.y: Y})
 
 def train(network_architecture, learning_rate=0.001,
 		  batch_size=100, training_epochs=10, display_step=5):
@@ -294,7 +344,7 @@ def train(network_architecture, learning_rate=0.001,
 
 if __name__ == "__main__":
 
-	X, y, mask = load_text(1000,1000)
+	X, y, mask, _map = load_text(1000,1000)
 
 	n_input = 1003
 	n_samples = 500
@@ -311,9 +361,11 @@ if __name__ == "__main__":
 
 	vae_2d = train(network_architecture, training_epochs=75, batch_size=500)
 
-	# x_sample = X
-	# y_sample = y
-	# z_mu = vae_2d.transform(x_sample)
+	x_sample = X[:10]
+	y_sample = y[:10]
+	y_hat = vae_2d.generate(_map,x_sample)
+	y_hat_words=ixtoword(_map,y_hat)
+	y_words=ixtoword(_map,y_sample)
 	# plt.figure(figsize=(8, 6)) 
 	# plt.scatter(z_mu[:, 0], z_mu[:, 1], c=np.argmax(y_sample, 1))
 	# plt.colorbar()
