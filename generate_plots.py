@@ -3,7 +3,7 @@ import pickle
 import gzip
 import pylab
 
-def load_file(filename, n_limit=None, skip=200):
+def load_file(filename, n_limit=None, skip=150):
 	with open(filename, 'rb') as f:
 		u = pickle._Unpickler(f)
 		u.encoding = 'latin1'
@@ -15,7 +15,7 @@ def load_file(filename, n_limit=None, skip=200):
 def main():
 
 	n_limit = 100
-	skip = 300
+	skip = 150
 
 	results_20 = list(zip(*enumerate(load_file("20_results.pkl", n_limit))))
 	results_20_256 = list(zip(*enumerate(load_file("20_256_results.pkl", n_limit))))

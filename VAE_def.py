@@ -30,7 +30,7 @@ def load_text(n,num_samples=None):
 	maxlen=0
 	for defi in def_list:
 		maxlen=max(maxlen,len(defi.split()))
-	print (maxlen)
+	print(maxlen)
 	maxlen=30
 
 	# # Initialize the "CountVectorizer" object, which is scikit-learn's
@@ -119,7 +119,7 @@ class VariationalAutoencoder(object):
 	See "Auto-Encoding Variational Bayes" by Kingma and Welling for more details.
 	"""
 	def __init__(self, network_architecture, transfer_fct=tf.nn.softplus, 
-				 learning_rate=0.001, batch_size=100):
+				 learning_rate=0.001, batch_size=100,generative=False):
 		self.network_architecture = network_architecture
 		self.transfer_fct = transfer_fct
 		self.learning_rate = learning_rate
@@ -133,6 +133,7 @@ class VariationalAutoencoder(object):
 		self.mask=tf.placeholder(tf.float32, [None, network_architecture["maxlen"]])
 		
 		# Create autoencoder network
+		
 		self._create_network()
 		# Define loss function based variational upper-bound and 
 		# corresponding optimizer
@@ -254,62 +255,63 @@ class VariationalAutoencoder(object):
 	def _build_gen(self):
 		#same setup as `_create_network` function 
 		input_embedding,_=self._get_input_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['input_meaning'])
-        # image_embedding = tf.matmul(img, self.img_embedding) + self.img_embedding_bias
-        state = self.lstm.zero_state(self.batch_size,dtype=tf.float32)
+		# image_embedding = tf.matmul(img, self.img_embedding) + self.img_embedding_bias
+		state = self.lstm.zero_state(self.batch_size,dtype=tf.float32)
 
-        #declare list to hold the words of our generated captions
-        all_words = []
-        with tf.variable_scope("RNN"):
-            # in the first iteration we have no previous word, so we directly pass in the image embedding
-            # and set the `previous_word` to the embedding of the start token ([0]) for the future iterations
-            output, state = self.lstm(image_embedding, state)
-            previous_word,_ = self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'], [0])
-            # previous_word = tf.nn.embedding_lookup(self.word_embedding, [0]) + self.embedding_bias
+		#declare list to hold the words of our generated captions
+		all_words = []
+		with tf.variable_scope("RNN"):
+			# in the first iteration we have no previous word, so we directly pass in the image embedding
+			# and set the `previous_word` to the embedding of the start token ([0]) for the future iterations
+			tf.get_variable_scope().reuse_variables()
+			output, state = self.lstm(input_embedding, state)
+			previous_word,_ = self._get_word_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['LSTM'], [0])
+			# previous_word = tf.nn.embedding_lookup(self.word_embedding, [0]) + self.embedding_bias
 
-            for i in range(self.network_architecture['maxlen']):
-                tf.get_variable_scope().reuse_variables()
+			for i in range(self.network_architecture['maxlen']):
+				tf.get_variable_scope().reuse_variables()
 
-                out, state = self.lstm(previous_word, state)
+				out, state = self.lstm(previous_word, state)
 
 
-                # get a one-hot word encoding from the output of the LSTM
-                logit = tf.matmul(out, self.word_encoding) + self.word_encoding_bias
-                best_word = tf.argmax(logit, 1)
+				# get a one-hot word encoding from the output of the LSTM
+				logit = tf.matmul(out, self.word_encoding) + self.word_encoding_bias
+				best_word = tf.argmax(logit, 1)
 
-                # with tf.device("/cpu:0"):
-                #     # get the embedding of the best_word to use as input to the next iteration of our LSTM 
-                #     previous_word = tf.nn.embedding_lookup(self.word_embedding, best_word)
+				# with tf.device("/cpu:0"):
+				#     # get the embedding of the best_word to use as input to the next iteration of our LSTM 
+				#     previous_word = tf.nn.embedding_lookup(self.word_embedding, best_word)
 
-                # previous_word += self.embedding_bias
+				# previous_word += self.embedding_bias
 
-                previous_word,_ = self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'], [best_word])
+				previous_word,_ = self._get_word_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['LSTM'], [best_word])
 
-                all_words.append(best_word)
+				all_words.append(best_word)
 
-        self.generated_words=all_words
+		self.generated_words=all_words
 
 	def generate(self, _map, x):
-	    """ Generate data by sampling from latent space.
+		""" Generate data by sampling from latent space.
 		
-	    If z_mu is not None, data for this point in latent space is
-	    generated. Otherwise, z_mu is drawn from prior in latent 
-	    space.        
-	    # """
-	    # if z_mu is None:
-	    #     z_mu = np.random.normal(size=self.network_architecture["n_z"])
-	    # # Note: This maps to mean of distribution, we could alternatively
-	    # # sample from Gaussian distribution
-	    # return self.sess.run(self.x_reconstr_mean, 
-	    #                      feed_dict={self.z: z_mu})
-	    
-	    saver = tf.train.Saver()
-	    saver.restore(sess, tf.train.latest_checkpoint(model_path))
+		If z_mu is not None, data for this point in latent space is
+		generated. Otherwise, z_mu is drawn from prior in latent 
+		space.        
+		# """
+		# if z_mu is None:
+		#     z_mu = np.random.normal(size=self.network_architecture["n_z"])
+		# # Note: This maps to mean of distribution, we could alternatively
+		# # sample from Gaussian distribution
+		# return self.sess.run(self.x_reconstr_mean, 
+		#                      feed_dict={self.z: z_mu})
+		
+		saver = tf.train.Saver()
+		saver.restore(self.sess, tf.train.latest_checkpoint(model_path))
 
-	    generated_word_index= sess.run(self.generated_words, feed_dict={self.x:x})
-	    generated_word_index = np.hstack(generated_word_index)
+		generated_word_index= self.sess.run(self.generated_words, feed_dict={self.x:x})
+		generated_word_index = np.hstack(generated_word_index)
 
-	    generated_sentence = ixtoword(_map,generated_word_index)
-	    return generated_sentence
+		generated_sentence = ixtoword(_map,generated_word_index)
+		return generated_sentence
 
 def ixtoword(_map,ixs):
 	return [_map[x] for x in ixs]
@@ -321,35 +323,36 @@ def train(network_architecture, learning_rate=0.001,
 								 learning_rate=learning_rate, 
 								 batch_size=batch_size)
 	# Training cycle
-	costs=[]
-	for epoch in range(training_epochs):
-		avg_cost = 0.
-		total_batch = int(n_samples / batch_size)
-		# Loop over all batches
-		for i in range(total_batch):
-			batch_xs = X[i*n_samples:n_samples, :]
+	# costs=[]
+	# for epoch in range(training_epochs):
+	# 	avg_cost = 0.
+	# 	total_batch = int(n_samples / batch_size)
+	# 	# Loop over all batches
+	# 	for i in range(total_batch):
+	# 		batch_xs = X[i*n_samples:n_samples, :]
 
-			# Fit training using batch data
-			cost = vae.partial_fit(batch_xs,y[i*n_samples:n_samples,:],mask[i*n_samples:n_samples,:])
-			# Compute average loss
-			avg_cost += np.sum(cost) / n_samples * batch_size
+	# 		# Fit training using batch data
+	# 		cost = vae.partial_fit(batch_xs,y[i*n_samples:n_samples,:],mask[i*n_samples:n_samples,:])
+	# 		# Compute average loss
+	# 		avg_cost += np.sum(cost) / n_samples * batch_size
 
-		vae.saver.save(vae.sess, './models/model')
-		costs.append(avg_cost)
-		pkl.dump(costs,open('50_256_results.pkl','wb'))
-		# Display logs per epoch step
-		if epoch % display_step == 0:
-			print("Epoch:", '%04d' % (epoch+1), 
-				  "cost=", avg_cost)
+	# 	vae.saver.save(vae.sess, './models/model')
+	# 	costs.append(avg_cost)
+	# 	pkl.dump(costs,open('50_256_results.pkl','wb'))
+	# 	# Display logs per epoch step
+	# 	if epoch % display_step == 0:
+	# 		print("Epoch:", '%04d' % (epoch+1), 
+	# 			  "cost=", avg_cost)
 	return vae
 
-def main():
+if __name__ == "__main__":
 
 	X, y, mask, _map = load_text(1000,1000)
 
 	n_input = 1003
 	n_samples = 500
-	lstm_dim=256
+	lstm_dim = 256
+	model_path = './models/'
 
 	X, y = X[:n_samples, :], y[:n_samples, :]
 
@@ -357,21 +360,21 @@ def main():
 		dict(maxlen=32, # 2nd layer decoder neurons
 			 n_input=n_input, # One hot encoding input
 			 n_lstm_input=lstm_dim, # LSTM cell size
-			 n_z=50, # dimensionality of latent space
+			 n_z=20, # dimensionality of latent space
 			 )  
 
-	vae_2d = train(network_architecture, training_epochs=300, batch_size=500)
-
+	vae_2d = train(network_architecture, training_epochs=100, batch_size=500)
+	vae_2d._build_gen()
 	x_sample = X[:10]
 	y_sample = y[:10]
 	y_hat = vae_2d.generate(_map,x_sample)
 	y_hat_words=ixtoword(_map,y_hat)
 	y_words=ixtoword(_map,y_sample)
+	print(y_hat)
+	print(y_hat_words)
+	print(y_words)
 	# plt.figure(figsize=(8, 6)) 
 	# plt.scatter(z_mu[:, 0], z_mu[:, 1], c=np.argmax(y_sample, 1))
 	# plt.colorbar()
 	# plt.grid()
 	# plt.show()
-
-if __name__ == "__main__":
-	main()
