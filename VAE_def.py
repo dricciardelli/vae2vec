@@ -1,6 +1,5 @@
 ''' Significant lifting from https://jmetzen.github.io/2015-11-27/vae.html '''
 import time
-time.sleep(3600)
 import numpy as np
 import tensorflow as tf
 
@@ -277,16 +276,17 @@ def train(network_architecture, learning_rate=0.001,
 		total_batch = int(n_samples / batch_size)
 		# Loop over all batches
 		for i in range(total_batch):
-			batch_xs = X[i*n_samples:n_samples, :]
+			batch_xs = X[i*batch_size:(i+1)*batch_size, :]
 
 			# Fit training using batch data
-			cost = vae.partial_fit(batch_xs,y[i*n_samples:n_samples,:],mask[i*n_samples:n_samples,:])
+			cost = vae.partial_fit(batch_xs,y[i*batch_size:(i+1)*batch_size, :],mask[i*batch_size:(i+1)*batch_size, :])
 			# Compute average loss
 			avg_cost += np.sum(cost) / n_samples * batch_size
+		print(epoch)
 
 		vae.saver.save(vae.sess, './models/model')
 		costs.append(avg_cost)
-		pkl.dump(costs,open('50_256_results.pkl','wb'))
+		pkl.dump(costs,open('100_256_30000_results.pkl','wb'))
 		# Display logs per epoch step
 		if epoch % display_step == 0:
 			print("Epoch:", '%04d' % (epoch+1), 
@@ -295,22 +295,22 @@ def train(network_architecture, learning_rate=0.001,
 
 if __name__ == "__main__":
 
-	X, y, mask = load_text(1000,1000)
+	X, y, mask = load_text(5000)
 
-	n_input = 1003
-	n_samples = 500
+	n_input = 5003
+	n_samples = 30000
 	lstm_dim=256
 
-	X, y = X[:n_samples, :], y[:n_samples, :]
+	# X, y = X[:n_samples, :], y[:n_samples, :]
 
 	network_architecture = \
 		dict(maxlen=32, # 2nd layer decoder neurons
 			 n_input=n_input, # One hot encoding input
 			 n_lstm_input=lstm_dim, # LSTM cell size
-			 n_z=50, # dimensionality of latent space
+			 n_z=100, # dimensionality of latent space
 			 )  
 
-	vae_2d = train(network_architecture, training_epochs=300, batch_size=500)
+	vae_2d = train(network_architecture, training_epochs=100, batch_size=500)
 
 	# x_sample = X
 	# y_sample = y
