@@ -1,7 +1,7 @@
 import re
 from nltk.corpus import wordnet as wn
 from nltk.corpus import words
-from datamuse import datamuse
+from datamuse import *
 import numpy as np
 import scipy.io as sio 
 
