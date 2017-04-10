@@ -2,6 +2,7 @@
 import time
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.ops import rnn
 import random
 
 import matplotlib.pyplot as plt
@@ -238,13 +239,27 @@ class VariationalAutoencoder(object):
 		network_weights = self._initialize_weights(**self.network_architecture)
 		start_token_tensor=tf.constant((np.zeros([self.batch_size,16])).astype(np.float32),dtype=tf.float32)
 		self.network_weights=network_weights
+		seqlen=tf.cast(tf.reduce_sum(self.mask,reduction_indices=-1),tf.int32)
+		embedded_input,embedded_input_KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'],tf.reshape(self.caption_placeholder,[-1,self.network_architecture['n_input']]),logit=True)
+		embedded_input=tf.reshape(embedded_input,[-1,self.network_architecture['maxlen'],self.network_architecture['n_lstm_input']])
+		if not vanilla:
+			embedded_input_KLD_loss=tf.reshape(embedded_input_KLD_loss,[-1,self.network_architecture['maxlen']])[:,1:]
+		encoder_input=embedded_input[:,1:,:]
+		cell=tf.contrib.rnn.BasicLSTMCell(self.network_architecture['n_lstm_input'])
+		encoder_outs,encoder_states=rnn.dynamic_rnn(cell,encoder_input,sequence_length=seqlen-1,dtype=tf.float32,time_major=False)
+		ix_range=tf.range(0,self.batch_size,1)
+		ixs=tf.expand_dims(ix_range,-1)
+		to_cat=tf.expand_dims(seqlen-2,-1)
+		gather_inds=tf.concat([ixs,to_cat],axis=-1)
+		outs=tf.gather_nd(encoder_outs,gather_inds)
+		input_embedding,input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
 		# Use recognition network to determine mean and 
 		# (log) variance of Gaussian distribution in latent
 		# space
-		if not same_embedding:
-			input_embedding,input_embedding_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'])
-		else:
-			input_embedding,input_embedding_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'])
+		# if not same_embedding:
+		# 	input_embedding,input_embedding_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'])
+		# else:
+		# 	input_embedding,input_embedding_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'])
 
 		state = self.lstm.zero_state(self.batch_size, dtype=tf.float32)
 
@@ -285,9 +300,7 @@ class VariationalAutoencoder(object):
 						# best_word=tf.round(best_word)
 						# all_the_f_one_h.append(best_word)
 						xentropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logit, labels=onehot)
-						print xentropy.shape
 						xentropy=tf.reduce_sum(xentropy,reduction_indices=-1)
-						print xentropy.shape
 					else:
 						xentropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit, labels=onehot)
 
@@ -298,12 +311,12 @@ class VariationalAutoencoder(object):
 					loss += tf.reduce_sum(xentropy)
 
 
-			loss = (loss / tf.reduce_sum(self.mask[:,1:]))+tf.reduce_sum(input_embedding_KLD_loss)
+			loss = (loss / tf.reduce_sum(self.mask[:,1:]))+tf.reduce_sum(input_embedding_KLD_loss)/self.batch_size+tf.reduce_sum(embedded_input_KLD_loss*self.mask[:,1:])/tf.reduce_sum(self.mask[:,1:])
 
 			self.loss=loss
 	
 	def _initialize_weights(self, n_lstm_input, maxlen, 
-							n_input, n_z):
+							n_input, n_z, n_z_m):
 		all_weights = dict()
 		if not same_embedding:
 			all_weights['input_meaning'] = {
@@ -316,11 +329,29 @@ class VariationalAutoencoder(object):
 			all_weights['variational_encoding'] = {
 				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean'),
 				'out_log_sigma': tf.Variable(xavier_init(n_input, n_z),name='out_log_sigma')}
+			
 		else:
 			all_weights['biases_variational_encoding'] = {
 				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb')}
 			all_weights['variational_encoding'] = {
 				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean')}
+			
+		if mid_vae:
+			all_weights['biases_middle_encoding'] = {
+				'out_mean': tf.Variable(tf.zeros([n_z_m], dtype=tf.float32),name='mid_out_meanb'),
+				'out_log_sigma': tf.Variable(tf.zeros([n_z_m], dtype=tf.float32),name='mid_out_log_sigmab')}
+			all_weights['middle_encoding'] = {
+				'out_mean': tf.Variable(xavier_init(n_lstm_input, n_z_m),name='mid_out_mean'),
+				'out_log_sigma': tf.Variable(xavier_init(n_lstm_input, n_z_m),name='mid_out_log_sigma'),
+				'affine_weight': tf.Variable(xavier_init(n_z_m, n_lstm_input),name='mid_affine_weight'),
+				'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='mid_affine_bias')}
+		else:
+			all_weights['biases_middle_encoding'] = {
+				'out_mean': tf.Variable(tf.zeros([n_z_m], dtype=tf.float32),name='mid_out_meanb')}
+			all_weights['middle_encoding'] = {
+				'out_mean': tf.Variable(xavier_init(n_lstm_input, n_z_m),name='mid_out_mean'),
+				'affine_weight': tf.Variable(xavier_init(n_z_m, n_lstm_input),name='mid_affine_weight'),
+				'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='mid_affine_bias')}
 		self.lstm=tf.contrib.rnn.BasicLSTMCell(n_lstm_input)
 		all_weights['LSTM'] = {
 			'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='affine_weight2'),
@@ -335,7 +366,18 @@ class VariationalAutoencoder(object):
 		embedding=tf.matmul(z,aff_weights['affine_weight'])+aff_weights['affine_bias']
 		return embedding,vae_loss
 
+	def _get_middle_embedding(self, ve_weights, lstm_weights, x,logit=False):
+		if logit:
+			z,vae_loss=self._vae_sample_mid(ve_weights[0],ve_weights[1],x)
+		else:
+			if not form2:
+				z,vae_loss=self._vae_sample_mid(ve_weights[0],ve_weights[1],x, True)
+			else:
+				z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],tf.one_hot(x,depth=self.network_architecture['n_input']))
+				all_the_f_one_h.append(tf.one_hot(x,depth=self.network_architecture['n_input']))
 
+		embedding=tf.matmul(z,lstm_weights['affine_weight'])+lstm_weights['affine_bias']
+		return embedding,vae_loss
 
 	def _get_word_embedding(self, ve_weights, lstm_weights, x,logit=False):
 		if logit:
@@ -370,6 +412,29 @@ class VariationalAutoencoder(object):
 				z=mu
 			KLD=0.0
 			if not vanilla:
+				KLD = -0.5 * tf.reduce_sum(1 + logvar - tf.pow(mu, 2) - tf.exp(logvar),axis=-1)
+				print logvar.shape,epsilon.shape,std.shape,z.shape,KLD.shape
+			return z,KLD
+
+	def _vae_sample_mid(self, weights, biases, x, lookup=False):
+			#TODO: consider adding a linear transform layer+relu or softplus here first 
+			if not lookup:
+				mu=tf.matmul(x,weights['out_mean'])+biases['out_mean']
+				if mid_vae:
+					logvar=tf.matmul(x,weights['out_log_sigma'])+biases['out_log_sigma']
+			else:
+				mu=tf.nn.embedding_lookup(weights['out_mean'],x)+biases['out_mean']
+				if mid_vae:
+					logvar=tf.nn.embedding_lookup(weights['out_log_sigma'],x)+biases['out_log_sigma']
+
+			if mid_vae:
+				epsilon=tf.random_normal(tf.shape(logvar),name='epsilon')
+				std=tf.exp(.5*logvar)
+				z=mu+tf.multiply(std,epsilon)
+			else:
+				z=mu
+			KLD=0.0
+			if mid_vae:
 				KLD = -0.5 * tf.reduce_sum(1 + logvar - tf.pow(mu, 2) - tf.exp(logvar),axis=-1)
 				print logvar.shape,epsilon.shape,std.shape,z.shape,KLD.shape
 			return z,KLD
@@ -547,7 +612,7 @@ def train(network_architecture, learning_rate=0.001,
 		if epoch % display_step == 0 or epoch==1:
 			if should_save:
 				print 'saving'
-				vae.saver.save(vae.sess, './modelstemp/model')
+				vae.saver.save(vae.sess, model_path+'model')
 				pkl.dump(costs,open('100_256_45000_allwords_results.pkl','wb'))
 			print("Epoch:", '%04d' % (epoch+1), 
 				  "cost=", avg_cost)
@@ -559,16 +624,17 @@ if __name__ == "__main__":
 
 	form2=True
 	vanilla=True
+	mid_vae=False
 	same_embedding=False
-	clip_grad=False
+	clip_grad=True
 	should_save=True
 	should_train=True
 	# should_train=not should_train
 	should_continue=False
-	should_decay=False
+	should_decay=True
 	zero_end_tok=True
 	training_epochs=10000
-	batch_size=1000
+	batch_size=500
 	all_the_f_one_h=[]
 	if not zero_end_tok:
 		X, y, mask, _map = load_text(2**16-4)
@@ -577,7 +643,7 @@ if __name__ == "__main__":
 	n_input =16
 	n_samples = 30000
 	lstm_dim=256
-	model_path = './modelstemp/'
+	model_path = './models2/'
 	all_samps=len(X)
 	# X, y = X[:n_samples, :], y[:n_samples, :]
 
@@ -586,6 +652,7 @@ if __name__ == "__main__":
 			 n_input=n_input, # One hot encoding input
 			 n_lstm_input=lstm_dim, # LSTM cell size
 			 n_z=512, # dimensionality of latent space
+			 n_z_m=1024,
 			 )  
 
 

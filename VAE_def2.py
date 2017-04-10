@@ -285,9 +285,7 @@ class VariationalAutoencoder(object):
 						# best_word=tf.round(best_word)
 						# all_the_f_one_h.append(best_word)
 						xentropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logit, labels=onehot)
-						print xentropy.shape
 						xentropy=tf.reduce_sum(xentropy,reduction_indices=-1)
-						print xentropy.shape
 					else:
 						xentropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit, labels=onehot)
 
@@ -298,7 +296,7 @@ class VariationalAutoencoder(object):
 					loss += tf.reduce_sum(xentropy)
 
 
-			loss = (loss / tf.reduce_sum(self.mask[:,1:]))+tf.reduce_sum(input_embedding_KLD_loss)
+			loss = loss / tf.reduce_sum(self.mask[:,1:])+tf.reduce_sum(input_embedding_KLD_loss)
 
 			self.loss=loss
 	
@@ -313,6 +311,7 @@ class VariationalAutoencoder(object):
 			all_weights['biases_variational_encoding'] = {
 				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb'),
 				'out_log_sigma': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_log_sigmab')}
+			print 'sup'
 			all_weights['variational_encoding'] = {
 				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean'),
 				'out_log_sigma': tf.Variable(xavier_init(n_input, n_z),name='out_log_sigma')}
@@ -332,21 +331,24 @@ class VariationalAutoencoder(object):
 	
 	def _get_input_embedding(self, ve_weights, aff_weights):
 		z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],self.x)
+		self.z=z
 		embedding=tf.matmul(z,aff_weights['affine_weight'])+aff_weights['affine_bias']
+		
 		return embedding,vae_loss
 
 
 
 	def _get_word_embedding(self, ve_weights, lstm_weights, x,logit=False):
-		if logit:
-			z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x)
-		else:
-			if not form2:
-				z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x, True)
-			else:
-				z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],tf.one_hot(x,depth=self.network_architecture['n_input']))
-				all_the_f_one_h.append(tf.one_hot(x,depth=self.network_architecture['n_input']))
-
+		vae_loss=0
+		# if logit:
+		# 	z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x)
+		# else:
+		# 	if not form2:
+		# 		z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x, True)
+		# 	else:
+		# 		z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],tf.one_hot(x,depth=self.network_architecture['n_input']))
+		# 		all_the_f_one_h.append(tf.one_hot(x,depth=self.network_architecture['n_input']))
+		z=self.z
 		embedding=tf.matmul(z,lstm_weights['affine_weight'])+lstm_weights['affine_bias']
 		return embedding,vae_loss
 	
@@ -547,7 +549,7 @@ def train(network_architecture, learning_rate=0.001,
 		if epoch % display_step == 0 or epoch==1:
 			if should_save:
 				print 'saving'
-				vae.saver.save(vae.sess, './modelstemp/model')
+				vae.saver.save(vae.sess, model_path+'model')
 				pkl.dump(costs,open('100_256_45000_allwords_results.pkl','wb'))
 			print("Epoch:", '%04d' % (epoch+1), 
 				  "cost=", avg_cost)
@@ -558,14 +560,14 @@ def train(network_architecture, learning_rate=0.001,
 if __name__ == "__main__":
 
 	form2=True
-	vanilla=True
+	vanilla=False
 	same_embedding=False
-	clip_grad=False
+	clip_grad=True
 	should_save=True
 	should_train=True
 	# should_train=not should_train
 	should_continue=False
-	should_decay=False
+	should_decay=True
 	zero_end_tok=True
 	training_epochs=10000
 	batch_size=1000
@@ -577,7 +579,7 @@ if __name__ == "__main__":
 	n_input =16
 	n_samples = 30000
 	lstm_dim=256
-	model_path = './modelstemp/'
+	model_path = './models2/'
 	all_samps=len(X)
 	# X, y = X[:n_samples, :], y[:n_samples, :]
 
