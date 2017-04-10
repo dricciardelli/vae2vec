@@ -77,6 +77,7 @@ def get_one_hot_map(to_def,corpus,n):
 
 	words+=list(map(lambda z:z[0],reversed(sorted(counts.items(),key=lambda x:x[1]))))[:n-len(words)]
 	print len(words)
+
 	i=0
 	# random.shuffle(words)
 	for word in words:
@@ -84,6 +85,7 @@ def get_one_hot_map(to_def,corpus,n):
 		_map[word]=i
 		rev_map[i]=word
 	rev_map[n+1]='<UNK>'
+
 	if zero_end_tok:
 		rev_map[0]='.'
 	else:
@@ -188,6 +190,7 @@ class VariationalAutoencoder(object):
 	"""
 	def __init__(self, network_architecture, transfer_fct=tf.nn.softplus, 
 				 learning_rate=0.001, batch_size=100,generative=False,ctrain=False,test=False):
+
 		self.network_architecture = network_architecture
 		self.transfer_fct = transfer_fct
 		self.learning_rate = learning_rate
@@ -218,7 +221,7 @@ class VariationalAutoencoder(object):
 				
 		else:
 			self._build_gen()
-		
+
 
 			
 
@@ -237,6 +240,7 @@ class VariationalAutoencoder(object):
 		# Initialize autoencode network weights and biases
 		network_weights = self._initialize_weights(**self.network_architecture)
 		start_token_tensor=tf.constant((np.zeros([self.batch_size,16])).astype(np.float32),dtype=tf.float32)
+
 		self.network_weights=network_weights
 		# Use recognition network to determine mean and 
 		# (log) variance of Gaussian distribution in latent
@@ -408,6 +412,7 @@ class VariationalAutoencoder(object):
 		
 	def _build_gen(self):
 		#same setup as `_create_network` function 
+
 		network_weights = self._initialize_weights(**self.network_architecture)
 		if form2:
 			start_token_tensor=tf.constant((np.zeros([self.batch_size,16])).astype(np.float32),dtype=tf.float32)
@@ -502,6 +507,7 @@ def ixtoword(_map,ixs):
 	return [[_map[x] for x in y] for y in ixs]
 def bin_to_int(a):
 	return [(x*(2** np.arange(x.shape[-1] ))).sum(axis=-1).astype(np.uint32) for x in a]
+
 	
 
 def train(network_architecture, learning_rate=0.001,
@@ -514,6 +520,7 @@ def train(network_architecture, learning_rate=0.001,
 								 learning_rate=learning_rate, 
 								 batch_size=batch_size,generative=gen,ctrain=ctrain,test=test)
 	# Training cycle
+
 	# if test:
 	# 	maxlen=network_architecture['maxlen']
 	# 	return tf.test.compute_gradient_error([vae.x,vae.caption_placeholder,vae.mask],[np.array([batch_size,n_input]),np.array([batch_size,maxlen,n_input]),np.array([batch_size,maxlen])],vae.loss,[])
@@ -553,9 +560,11 @@ def train(network_architecture, learning_rate=0.001,
 				  "cost=", avg_cost)
 
 
+
 	return vae
 
 if __name__ == "__main__":
+
 
 	form2=True
 	vanilla=True
@@ -581,10 +590,12 @@ if __name__ == "__main__":
 	all_samps=len(X)
 	# X, y = X[:n_samples, :], y[:n_samples, :]
 
+
 	network_architecture = \
 		dict(maxlen=32, # 2nd layer decoder neurons
 			 n_input=n_input, # One hot encoding input
 			 n_lstm_input=lstm_dim, # LSTM cell size
+
 			 n_z=512, # dimensionality of latent space
 			 )  
 
