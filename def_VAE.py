@@ -15,18 +15,23 @@ import pickle as pkl
 
 
 def load_text(n,num_samples=None):
-	fname = 'Oxford_English_Dictionary.txt'
-	txt = []
-	with open(fname,'rb') as f:
-		txt = f.readlines()
+	# fname = 'Oxford_English_Dictionary.txt'
+	# txt = []
+	# with open(fname,'rb') as f:
+	# 	txt = f.readlines()
 
-	txt = [x.decode('utf-8').strip() for x in txt]
-	txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
+	# txt = [x.decode('utf-8').strip() for x in txt]
+	# txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
 
 	# List of words
-	word_list = [x.split(' ', 1)[0].strip() for x in txt]
-	# List of definitions
-	def_list = [x.split(' ', 1)[1].strip()for x in txt]
+	# word_list = [x.split(' ', 1)[0].strip() for x in txt]
+	# # List of definitions
+	# def_list = [x.split(' ', 1)[1].strip()for x in txt]
+	with open('./training_data/training_data.pkl','rb') as raw:
+		word_list,def_list=pkl.load(raw)
+
+	def_list=[' '.join(defi) for defi in def_list]
+
 
 	maxlen=0
 	for defi in def_list:
@@ -73,11 +78,11 @@ def get_one_hot_map(to_def,corpus,n):
 	# words=words[:25000]
 	for i in counts.values():
 		uniq[i]+=1
-	print len(words)
+	print (len(words))
 	# random.shuffle(words)
 
 	words+=list(map(lambda z:z[0],reversed(sorted(counts.items(),key=lambda x:x[1]))))[:n-len(words)]
-	print len(words)
+	print (len(words))
 	i=0
 	# random.shuffle(words)
 	for word in words:
@@ -90,8 +95,8 @@ def get_one_hot_map(to_def,corpus,n):
 	else:
 		rev_map[0]='Start'
 		rev_map[n+2]='End'
-	print list(reversed(sorted(uniq.items())))
-	print len(list(uniq.items()))
+	print (list(reversed(sorted(uniq.items()))))
+	print (len(list(uniq.items())))
 	# print rev_map
 	return _map,rev_map
 
@@ -108,14 +113,14 @@ def map_one_hot(corpus,_map,maxlen,n):
 					if mapped==75001:
 						total_not+=1
 					rtn[l,mapped]=1
-			print total_not,len(corpus)
+			print (total_not,len(corpus))
 			return rtn
 		else:
 			total_not=0
 			if not onehot:
-				rtn=np.zeros([len(corpus),16],dtype=np.float32)
+				rtn=np.zeros([len(corpus),binary_dim],dtype=np.float32)
 			else:
-				rtn=np.zeros([len(corpus),2**16],dtype=np.float32)
+				rtn=np.zeros([len(corpus),2**binary_dim],dtype=np.float32)
 			for l,line in enumerate(corpus):
 			# if len(line)==0:
 			# 	rtn[l]=n+2
@@ -126,16 +131,16 @@ def map_one_hot(corpus,_map,maxlen,n):
 				if mapped==75001:
 					total_not+=1
 				if onehot:
-					binrep=np.zeros(2**16)
+					binrep=np.zeros(2**binary_dim)
 					binrep[mapped]=1
 				else:
-					binrep=(1&(mapped/(2**np.arange(16)))).astype(np.float32)
+					binrep=(1&(mapped/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
 				rtn[l]=binrep
-			print total_not,len(corpus)
+			print (total_not,len(corpus))
 			return rtn
 	else:
 		if form2:
-			rtn=np.zeros([len(corpus),maxlen+2,16],dtype=np.float32)
+			rtn=np.zeros([len(corpus),maxlen+2,binary_dim],dtype=np.float32)
 		else:
 			rtn=np.zeros([len(corpus),maxlen+2],dtype=np.int32)
 		print (rtn.shape)
@@ -154,7 +159,7 @@ def map_one_hot(corpus,_map,maxlen,n):
 
 				mapped=_map[line[i]]
 				if form2:
-					binrep=(1&(mapped/(2**np.arange(16)))).astype(np.float32)
+					binrep=(1&(mapped/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
 					rtn[l,i+1,:]=binrep
 				else:
 					rtn[l,i+1]=mapped
@@ -167,12 +172,12 @@ def map_one_hot(corpus,_map,maxlen,n):
 			if zero_end_tok:
 				to_app=0
 			if form2:
-				rtn[l,x+1,:]=(1&(to_app/(2**np.arange(16)))).astype(np.float32)
+				rtn[l,x+1,:]=(1&(to_app/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
 			else:
 				rtn[l,x+1]=to_app
 			mask[l,x+1]=1.0
 
-		print nopes,totes,wtf
+		print (nopes,totes,wtf)
 		return rtn,mask
 
 
@@ -199,7 +204,7 @@ class VariationalAutoencoder(object):
 		self.network_architecture = network_architecture
 		self.transfer_fct = transfer_fct
 		self.learning_rate = learning_rate
-		print self.learning_rate
+		print (self.learning_rate)
 		self.batch_size = batch_size
 		
 		# tf Graph input
@@ -217,7 +222,7 @@ class VariationalAutoencoder(object):
 			self.caption_placeholder = tf.placeholder(tf.int32, [None,network_architecture["maxlen"]],name='caption_placeholder')
 		else:
 			self.caption_placeholder = tf.placeholder(tf.float32, [None, network_architecture["maxlen"],self.n_words],name='caption_placeholder')
-			print self.caption_placeholder.shape
+			print (self.caption_placeholder.shape)
 		self.mask=tf.placeholder(tf.float32, [None, network_architecture["maxlen"]],name='mask')
 		
 		# Create autoencoder network
@@ -249,7 +254,7 @@ class VariationalAutoencoder(object):
 		# Initialize autoencode network weights and biases
 		self.debshit=tf.constant(0)
 		network_weights = self._initialize_weights(**self.network_architecture)
-		start_token_tensor=tf.constant((np.zeros([self.batch_size,16])).astype(np.float32),dtype=tf.float32)
+		start_token_tensor=tf.constant((np.zeros([self.batch_size,binary_dim])).astype(np.float32),dtype=tf.float32)
 		self.network_weights=network_weights
 		seqlen=tf.cast(tf.reduce_sum(self.mask,reduction_indices=-1),tf.int32)
 		embedded_input,embedded_input_KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'],tf.reshape(self.caption_placeholder,[-1,self.network_architecture['n_input']]),logit=True)
@@ -271,9 +276,9 @@ class VariationalAutoencoder(object):
 		# self.debshit=tf.gather_nd(self.caption_placeholder[:,1:,:],gather_inds)[:20]
 		# self.debshit=(outs[:20],outs2[:20])
 
-		print outs.shape
+		print (outs.shape)
 		input_embedding,input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
-		print input_embedding.shape
+		print (input_embedding.shape)
 		# print embedded_input_KLD_loss.shape,self.mask[:,1:].shape
 		loss = tf.reduce_sum(input_embedding_KLD_loss)/self.batch_size
 		self.l1=loss
@@ -315,7 +320,7 @@ class VariationalAutoencoder(object):
 			# best_word=tf.round(best_word)
 			# all_the_f_one_h.append(best_word)
 			xentropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logit, labels=self.x)
-			print logit.shape
+			print (logit.shape)
 			# self.debshit=(logit[:20])
 			xentropy=tf.reduce_sum(xentropy,reduction_indices=-1)
 		else:
@@ -430,7 +435,7 @@ class VariationalAutoencoder(object):
 			KLD=0.0
 			if not vanilla:
 				KLD = -0.5 * tf.reduce_sum(1 + logvar - tf.pow(mu, 2) - tf.exp(logvar),axis=-1)
-				print logvar.shape,epsilon.shape,std.shape,z.shape,KLD.shape
+				print (logvar.shape,epsilon.shape,std.shape,z.shape,KLD.shape)
 			return z,KLD
 
 	def _vae_sample_mid(self, weights, biases, x, lookup=False):
@@ -453,7 +458,7 @@ class VariationalAutoencoder(object):
 			KLD=0.0
 			if mid_vae:
 				KLD = -0.5 * tf.reduce_sum(1 + logvar - tf.pow(mu, 2) - tf.exp(logvar),axis=-1)
-				print logvar.shape,epsilon.shape,std.shape,z.shape,KLD.shape
+				print (logvar.shape,epsilon.shape,std.shape,z.shape,KLD.shape)
 			return z,KLD
 
 	def _create_loss_optimizer(self):
@@ -480,20 +485,20 @@ class VariationalAutoencoder(object):
 		Return cost of mini-batch.
 		"""
 		if self.test and testify:
-			print tf.test.compute_gradient_error(self.x,np.array([self.batch_size,self.n_words]),self.loss,[self.batch_size],extra_feed_dict={self.caption_placeholder: y, self.mask: mask})
+			print (tf.test.compute_gradient_error(self.x,np.array([self.batch_size,self.n_words]),self.loss,[self.batch_size],extra_feed_dict={self.caption_placeholder: y, self.mask: mask}))
 			exit()
 		else:
 			opt, cost,shit,l1,l2 = self.sess.run((self.optimizer, self.loss,self.debshit,self.l1,self.l2), 
 									  feed_dict={self.x: X, self.caption_placeholder: y, self.mask: mask})
 			if testify:
-				print shit,l1,l2
+				print (shit,l1,l2)
 		return cost
 		
 	def _build_gen(self):
 		#same setup as `_create_network` function 
 		network_weights = self._initialize_weights(**self.network_architecture)
 		if form2:
-			start_token_tensor=tf.constant((np.zeros([self.batch_size,16])).astype(np.float32),dtype=tf.float32)
+			start_token_tensor=tf.constant((np.zeros([self.batch_size,binary_dim])).astype(np.float32),dtype=tf.float32)
 		else:
 			start_token_tensor=tf.constant((np.zeros([self.batch_size])).astype(np.int32),dtype=tf.int32)
 		self.network_weights=network_weights
@@ -501,7 +506,7 @@ class VariationalAutoencoder(object):
 			input_embedding,_=self._get_input_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['input_meaning'])
 		else:
 			input_embedding,_=self._get_input_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['LSTM'])
-		print input_embedding.shape
+		print (input_embedding.shape)
 		# image_embedding = tf.matmul(img, self.img_embedding) + self.img_embedding_bias
 		state = self.lstm.zero_state(self.batch_size,dtype=tf.float32)
 
@@ -511,17 +516,17 @@ class VariationalAutoencoder(object):
 			# in the first iteration we have no previous word, so we directly pass in the image embedding
 			# and set the `previous_word` to the embedding of the start token ([0]) for the future iterations
 			output, state = self.lstm(input_embedding, state)
-			print state,output.shape
+			print (state,output.shape)
 			if form2:
 				previous_word,_ = self._get_word_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['LSTM'], start_token_tensor,logit=True)
 			else:
 				previous_word,_ = self._get_word_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['LSTM'], start_token_tensor)
-			print previous_word.shape
+			print (previous_word.shape)
 			# previous_word = tf.nn.embedding_lookup(self.word_embedding, [0]) + self.embedding_bias
 
 			for i in range(self.network_architecture['maxlen']):
 				tf.get_variable_scope().reuse_variables()
-				print i
+				print (i)
 
 				out, state = self.lstm(previous_word, state)
 
@@ -539,12 +544,12 @@ class VariationalAutoencoder(object):
 				#     previous_word = tf.nn.embedding_lookup(self.word_embedding, best_word)
 
 				# previous_word += self.embedding_bias
-				print logit.shape
+				print (logit.shape)
 				if form2:
 					previous_word,_ = self._get_word_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['LSTM'], best_word,logit=True)
 				else:
 					previous_word,_ = self._get_word_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['LSTM'], best_word)
-				print previous_word.shape
+				print (previous_word.shape)
 				all_words.append(best_word)
 
 		self.generated_words=all_words
@@ -567,8 +572,8 @@ class VariationalAutoencoder(object):
 		# saver.restore(self.sess, tf.train.latest_checkpoint(model_path))
 
 		generated_word_index,f_it= self.sess.run([self.generated_words,all_the_f_one_h], feed_dict={self.x:x})
-		print f_it
-		print generated_word_index
+		print (f_it)
+		print (generated_word_index)
 		if form2:
 			generated_word_index=np.array(bin_to_int(generated_word_index))
 			generated_word_index=np.rollaxis(generated_word_index,1)
@@ -631,7 +636,7 @@ def train(network_architecture, learning_rate=0.001,
 		# Display logs per epoch step
 		if epoch % display_step == 0 or epoch==1:
 			if should_save:
-				print 'saving'
+				print ('saving')
 				vae.saver.save(vae.sess, model_path+'model')
 				pkl.dump(costs,open('100_256_45000_allwords_results.pkl','wb'))
 			print("Epoch:", '%04d' % (epoch+1), 
@@ -645,7 +650,7 @@ if __name__ == "__main__":
 	form2=True
 	vanilla=True
 	mid_vae=False
-	onehot=True
+	onehot=False
 	same_embedding=False
 	clip_grad=True
 	should_save=True
@@ -656,25 +661,26 @@ if __name__ == "__main__":
 	zero_end_tok=True
 	training_epochs=10000
 	batch_size=50
+	binary_dim=17
 	all_the_f_one_h=[]
 	if not zero_end_tok:
-		X, y, mask, _map = load_text(2**16-4)
+		X, y, mask, _map = load_text(2**binary_dim-4)
 	else:
-		X, y, mask, _map = load_text(2**16-3)
-	n_input =16
+		X, y, mask, _map = load_text(2**binary_dim-3)
+	n_input =binary_dim
 	n_samples = 30000
-	lstm_dim=512
+	lstm_dim=128
 	model_path = './models2/'
 	all_samps=len(X)
-	# X, y = X[:n_samples, :], y[:n_samples, :]
+	X, y = X[:n_samples, :], y[:n_samples, :]
 
 	network_architecture = \
 		dict(maxlen=32, # 2nd layer decoder neurons
 			 n_input=n_input, # One hot encoding input
 			 n_lstm_input=lstm_dim, # LSTM cell size
 			 n_z=512, # dimensionality of latent space
-			 n_z_m=1024,
-			 n_z_m_2=512
+			 n_z_m=512,
+			 n_z_m_2=256
 			 )  
 
 
@@ -689,15 +695,15 @@ if __name__ == "__main__":
 		ind_list=np.arange(len(X)).astype(int)
 		np.random.shuffle(ind_list)
 		x_sample = X[ind_list[:1000]]
-		print x_sample
+		print (x_sample)
 		y_sample = y[ind_list[:1000]]
-		print y_sample
+		print (y_sample)
 
 		y_hat = vae_2d.generate(_map,x_sample)
 		y_hat=y_hat[:10]
 		# print y_hat
 		y_hat_words=ixtoword(_map,y_hat)
-		print y_hat_words
+		print (y_hat_words)
 		if form2:
 			y_words=ixtoword(_map,np.array(bin_to_int(y_sample[:10])))
 		else:
