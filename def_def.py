@@ -12,25 +12,46 @@ from sklearn.feature_extraction.text import CountVectorizer
 
 from collections import defaultdict
 import pickle as pkl
+import itertools
 
+import ctc_loss
+
+import os
 
 def load_text(n,num_samples=None):
-	fname = 'Oxford_English_Dictionary.txt'
-	txt = []
-	with open(fname,'rb') as f:
-		txt = f.readlines()
+	# fname = 'Oxford_English_Dictionary.txt'
+	# txt = []
+	# with open(fname,'rb') as f:
+	# 	txt = f.readlines()
 
-	txt = [x.decode('utf-8').strip() for x in txt]
-	txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
+	# txt = [x.decode('utf-8').strip() for x in txt]
+	# txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
 
 	# List of words
-	word_list = [x.split(' ', 1)[0].strip() for x in txt]
-	# List of definitions
-	def_list = [x.split(' ', 1)[1].strip()for x in txt]
+	# word_list = [x.split(' ', 1)[0].strip() for x in txt]
+	# # List of definitions
+	# def_list = [x.split(' ', 1)[1].strip()for x in txt]
+	with open('./training_data/training_data.pkl','rb') as raw:
+		word_list,dl=pkl.load(raw)
+	def_list=[]	
+	# def_list=[' '.join(defi) for defi in def_list]
+	i=0
+	while i<len( dl):
+		defi=dl[i]
+		if len(defi)>0:
+			def_list+=[' '.join(defi)]
+			i+=1
+		else:
+			dl.pop(i)
+			word_list.pop(i)
+
 
 	maxlen=0
+	minlen=100
 	for defi in def_list:
+		minlen=min(minlen,len(defi.split()))
 		maxlen=max(maxlen,len(defi.split()))
+	print(minlen)
 	print(maxlen)
 	maxlen=30
 
@@ -50,7 +71,6 @@ def load_text(n,num_samples=None):
 	# X = (36665, 56210)
 
 	X = map_one_hot(word_list[:num_samples],_map,1,n)
-	X = map_one_hot(word_list[:num_samples],_map,1,n)
 	# y = (36665, 56210)
 	# print _map
 	y,mask = map_one_hot(def_list[:num_samples],_map,maxlen,n)
@@ -58,42 +78,83 @@ def load_text(n,num_samples=None):
 	return X, y, mask,rev_map
 
 def get_one_hot_map(to_def,corpus,n):
-	words=[]
-	for line in to_def:
-		if line:
-			words.append(line.split()[0])
+	# words={}
+	# for line in to_def:
+	# 	if line:
+	# 		words[line.split()[0]]=1
 
+	
+
+	# counts=defaultdict(int)
+	# uniq=defaultdict(int)
+	# for line in corpus:
+	# 	for word in line.split():
+	# 		if word not in words:
+	# 			counts[word]+=1
+	# words=list(words.keys())
+	words=[]
 	counts=defaultdict(int)
 	uniq=defaultdict(int)
-	for line in corpus:
+	for line in to_def+corpus:
 		for word in line.split():
-			counts[word]+=1
+			if word not in words:
+				counts[word]+=1
 	_map=defaultdict(lambda :n+1)
 	rev_map=defaultdict(lambda:"<UNK>")
 	# words=words[:25000]
 	for i in counts.values():
 		uniq[i]+=1
-	print len(words)
+	print (len(words))
 	# random.shuffle(words)
 
 	words+=list(map(lambda z:z[0],reversed(sorted(counts.items(),key=lambda x:x[1]))))[:n-len(words)]
-	print len(words)
+	print (len(words))
 	i=0
 	# random.shuffle(words)
-	for word in words:
-		i+=1
-		_map[word]=i
-		rev_map[i]=word
+	for num_bits in range(binary_dim):
+		for bit_config in itertools.combinations_with_replacement(range(binary_dim),num_bits+1):
+			bitmap=np.zeros(binary_dim)
+			bitmap[np.array(bit_config)]=1
+			num=bitmap*(2** np.arange(binary_dim ))
+			num=np.sum(num).astype(np.uint32)
+			word=words[i]
+			_map[word]=num
+			rev_map[num]=word
+			i+=1
+			if i>=len(words):
+				break
+		if i>=len(words):
+				break
+	# 	for word in words:
+	# 		i+=1
+	# 		_map[word]=i
+	# 		rev_map[i]=word
 	rev_map[n+1]='<UNK>'
 	if zero_end_tok:
 		rev_map[0]='.'
 	else:
 		rev_map[0]='Start'
 		rev_map[n+2]='End'
-	print list(reversed(sorted(uniq.items())))
-	print len(list(uniq.items()))
+	print (list(reversed(sorted(uniq.items()))))
+	print (len(list(uniq.items())))
 	# print rev_map
 	return _map,rev_map
+def map_word_emb(corpus,_map):
+	### NOTE: ONLY WORKS ON TARGET WORD (DOES NOT HANDLE UNK PROPERLY)
+	rtn=[]
+	rtn2=[]
+	for word in corpus:
+		mapped=_map[word]
+		rtn.append(mapped)
+		if get_rand_vec:
+			mapped_rand=random.choice(list(_map.keys()))
+			while mapped_rand==word:
+				mapped_rand=random.choice(list(_map.keys()))
+			mapped_rand=_map[mapped_rand]
+			rtn2.append(mapped_rand)
+	if get_rand_vec:
+		return np.array(rtn),np.array(rtn2)
+	return np.array(rtn)
 
 def map_one_hot(corpus,_map,maxlen,n):
 	if maxlen==1:
@@ -108,11 +169,14 @@ def map_one_hot(corpus,_map,maxlen,n):
 					if mapped==75001:
 						total_not+=1
 					rtn[l,mapped]=1
-			print total_not,len(corpus)
+			print (total_not,len(corpus))
 			return rtn
 		else:
 			total_not=0
-			rtn=np.zeros([len(corpus),16],dtype=np.float32)
+			if not onehot:
+				rtn=np.zeros([len(corpus),binary_dim],dtype=np.float32)
+			else:
+				rtn=np.zeros([len(corpus),2**binary_dim],dtype=np.float32)
 			for l,line in enumerate(corpus):
 			# if len(line)==0:
 			# 	rtn[l]=n+2
@@ -122,13 +186,18 @@ def map_one_hot(corpus,_map,maxlen,n):
 				mapped=_map[line]
 				if mapped==75001:
 					total_not+=1
-				binrep=(1&(mapped/(2**np.arange(16)))).astype(np.float32)
+				if onehot:
+					binrep=np.zeros(2**binary_dim)
+					print line
+					binrep[mapped]=1
+				else:
+					binrep=(1&(mapped/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
 				rtn[l]=binrep
-			print total_not,len(corpus)
+			print (total_not,len(corpus))
 			return rtn
 	else:
 		if form2:
-			rtn=np.zeros([len(corpus),maxlen+2,16],dtype=np.float32)
+			rtn=np.zeros([len(corpus),maxlen+2,binary_dim],dtype=np.float32)
 		else:
 			rtn=np.zeros([len(corpus),maxlen+2],dtype=np.int32)
 		print (rtn.shape)
@@ -147,7 +216,7 @@ def map_one_hot(corpus,_map,maxlen,n):
 
 				mapped=_map[line[i]]
 				if form2:
-					binrep=(1&(mapped/(2**np.arange(16)))).astype(np.float32)
+					binrep=(1&(mapped/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
 					rtn[l,i+1,:]=binrep
 				else:
 					rtn[l,i+1]=mapped
@@ -160,12 +229,12 @@ def map_one_hot(corpus,_map,maxlen,n):
 			if zero_end_tok:
 				to_app=0
 			if form2:
-				rtn[l,x+1,:]=(1&(to_app/(2**np.arange(16)))).astype(np.float32)
+				rtn[l,x+1,:]=(1&(to_app/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
 			else:
 				rtn[l,x+1]=to_app
 			mask[l,x+1]=1.0
 
-		print nopes,totes,wtf
+		print (nopes,totes,wtf)
 		return rtn,mask
 
 
@@ -188,12 +257,15 @@ class VariationalAutoencoder(object):
 	See "Auto-Encoding Variational Bayes" by Kingma and Welling for more details.
 	"""
 	def __init__(self, network_architecture, transfer_fct=tf.nn.softplus, 
-				 learning_rate=0.001, batch_size=100,generative=False,ctrain=False,test=False):
+				 learning_rate=0.001, batch_size=100,generative=False,ctrain=False,test=False,global_step=None):
 		self.network_architecture = network_architecture
 		self.transfer_fct = transfer_fct
 		self.learning_rate = learning_rate
 		print self.learning_rate
 		self.batch_size = batch_size
+		if global_step is None:
+			global_step=tf.Variable(0,trainiable=False)
+		self.global_step=global_step
 		
 		# tf Graph input
 		self.n_words=network_architecture['n_input']
@@ -210,11 +282,15 @@ class VariationalAutoencoder(object):
 		self.mask=tf.placeholder(tf.float32, [None, network_architecture["maxlen"]],name='mask')
 		
 		# Create autoencoder network
+		to_restore=None
 		if not generative:	
 			self._create_network()
 			# Define loss function based variational upper-bound and 
 			# corresponding optimizer
+			to_restore=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+
 			self._create_loss_optimizer()
+
 			self.test=test
 				
 		else:
@@ -229,15 +305,24 @@ class VariationalAutoencoder(object):
 
 		# Launch the session
 		self.sess = tf.InteractiveSession()
-		self.saver = tf.train.Saver(max_to_keep=100)
+		if embeddings_trainable:
+			self.saver = tf.train.Saver(var_list=to_restore,max_to_keep=100)
+			saved_path=tf.train.latest_checkpoint(model_path)
+		else:
+			self.saver= tf.train.Saver(var_list=self.untrainable_variables,max_to_keep=100)
+			mod_path=model_path
+			if use_ctc:
+				mod_path=mod_path[:-3]
+			saved_path=tf.train.latest_checkpoint(mod_path.replace('defdef','embtransfer'))
 		self.sess.run(init)
 		if ctrain:
-			self.saver.restore(self.sess, tf.train.latest_checkpoint(model_path))
+			self.saver.restore(self.sess, saved_path)
+		self.saver=tf.train.Saver(max_to_keep=100)
 	
 	def _create_network(self):
 		# Initialize autoencode network weights and biases
 		network_weights = self._initialize_weights(**self.network_architecture)
-		start_token_tensor=tf.constant((np.zeros([self.batch_size,16])).astype(np.float32),dtype=tf.float32)
+		start_token_tensor=tf.constant((np.zeros([self.batch_size,binary_dim])).astype(np.float32),dtype=tf.float32)
 		self.network_weights=network_weights
 		seqlen=tf.cast(tf.reduce_sum(self.mask,reduction_indices=-1),tf.int32)
 		embedded_input,embedded_input_KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'],tf.reshape(self.caption_placeholder,[-1,self.network_architecture['n_input']]),logit=True)
@@ -246,13 +331,19 @@ class VariationalAutoencoder(object):
 			embedded_input_KLD_loss=tf.reshape(embedded_input_KLD_loss,[-1,self.network_architecture['maxlen']])[:,1:]
 		encoder_input=embedded_input[:,1:,:]
 		cell=tf.contrib.rnn.BasicLSTMCell(self.network_architecture['n_lstm_input'])
+		if lstm_stack>1:
+			cell=tf.contrib.rnn.MultiRNNCell([cell]*lstm_stack)
 		encoder_outs,encoder_states=rnn.dynamic_rnn(cell,encoder_input,sequence_length=seqlen-1,dtype=tf.float32,time_major=False)
 		ix_range=tf.range(0,self.batch_size,1)
 		ixs=tf.expand_dims(ix_range,-1)
 		to_cat=tf.expand_dims(seqlen-2,-1)
 		gather_inds=tf.concat([ixs,to_cat],axis=-1)
 		outs=tf.gather_nd(encoder_outs,gather_inds)
+
 		input_embedding,input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
+
+		KLD_penalty=tf.tanh(tf.cast(self.global_step,tf.float32)/1600.0)
+
 		# Use recognition network to determine mean and 
 		# (log) variance of Gaussian distribution in latent
 		# space
@@ -260,10 +351,15 @@ class VariationalAutoencoder(object):
 		# 	input_embedding,input_embedding_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'])
 		# else:
 		# 	input_embedding,input_embedding_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'])
-
+		if embeddings_trainable:
+			input_embedding=tf.stop_gradient(input_embedding)
+		embed2decoder=tf.Variable(xavier_init(self.network_architecture['n_z_m_2'],self.network_architecture['n_lstm_input']),name='decoder_embedding_weight')
+		embed2decoder_bias=tf.Variable(tf.zeros(self.network_architecture['n_lstm_input']),name='decoder_embedding_bias')
 		state = self.lstm.zero_state(self.batch_size, dtype=tf.float32)
-
+		input_embedding=tf.matmul(input_embedding,embed2decoder)+embed2decoder_bias
 		loss = 0
+		self.debug=0
+		probs=[]
 		with tf.variable_scope("RNN"):
 			for i in range(self.network_architecture['maxlen']): 
 				if i > 0:
@@ -273,7 +369,7 @@ class VariationalAutoencoder(object):
 						current_embedding,KLD_loss = self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'], self.caption_placeholder[:,i-1,:],logit=True)
 					else:
 						current_embedding,KLD_loss = self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'], self.caption_placeholder[:,i-1])
-					loss+=tf.reduce_sum(KLD_loss*self.mask[:,i])
+					loss+=tf.reduce_sum(KLD_loss*self.mask[:,i])*KLD_penalty
 				else:
 					 current_embedding = input_embedding
 				if i > 0: 
@@ -294,48 +390,59 @@ class VariationalAutoencoder(object):
 						onehot=self.caption_placeholder[:,i,:]
 
 					logit = tf.matmul(out, network_weights['LSTM']['encoding_weight']) + network_weights['LSTM']['encoding_bias']
-					if form2:
-						# best_word=tf.nn.softmax(logit)
+					if not use_ctc:
+						if form2:
+							# best_word=tf.nn.softmax(logit)
+							
+							# best_word=tf.round(best_word)
+							# all_the_f_one_h.append(best_word)
+							xentropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logit, labels=onehot)
+							xentropy=tf.reduce_sum(xentropy,reduction_indices=-1)
+						else:
+							xentropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit, labels=onehot)
+
 						
-						# best_word=tf.round(best_word)
-						# all_the_f_one_h.append(best_word)
-						xentropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logit, labels=onehot)
-						xentropy=tf.reduce_sum(xentropy,reduction_indices=-1)
+						xentropy = xentropy * self.mask[:,i]
+						xentropy=tf.reduce_sum(xentropy)
+						self.debug+=xentropy
+						loss += xentropy
+
 					else:
-						xentropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit, labels=onehot)
-
-					
-					xentropy = xentropy * self.mask[:,i]
-
-
-					loss += tf.reduce_sum(xentropy)
-
-
-			loss = (loss / tf.reduce_sum(self.mask[:,1:]))+tf.reduce_sum(input_embedding_KLD_loss)/self.batch_size+tf.reduce_sum(embedded_input_KLD_loss*self.mask[:,1:])/tf.reduce_sum(self.mask[:,1:])
+						probs.append(tf.expand_dims(tf.nn.sigmoid(logit),1))
+			if not use_ctc:
+				loss_ctc=0
+			else:
+				probs=tf.concat(probs,axis=1)
+				probs=ctc_loss.get_output_probabilities(probs,self.caption_placeholder[:,1:,:])
+				loss_ctc=ctc_loss.loss(probs,self.caption_placeholder[:,1:,:],self.network_architecture['maxlen']-2,self.batch_size,seqlen-1)
+				self.debug=loss_ctc
+			# self.debug/=tf.reduce_sum(self.mask[:,1:])
+			loss = (loss / tf.reduce_sum(self.mask[:,1:]))+tf.reduce_sum(input_embedding_KLD_loss)/self.batch_size*KLD_penalty+tf.reduce_sum(embedded_input_KLD_loss*self.mask[:,1:])/tf.reduce_sum(self.mask[:,1:])*KLD_penalty+loss_ctc
 
 			self.loss=loss
 	
 	def _initialize_weights(self, n_lstm_input, maxlen, 
-							n_input, n_z, n_z_m):
+							n_input, n_z, n_z_m,n_z_m_2):
 		all_weights = dict()
 		if not same_embedding:
 			all_weights['input_meaning'] = {
-				'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='affine_weight'),
-				'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='affine_bias')}
+				'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='affine_weight',trainable=embeddings_trainable),
+				'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='affine_bias',trainable=embeddings_trainable)}
 		if not vanilla:
 			all_weights['biases_variational_encoding'] = {
-				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb'),
-				'out_log_sigma': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_log_sigmab')}
+				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb',trainable=embeddings_trainable),
+				'out_log_sigma': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_log_sigmab',trainable=embeddings_trainable)}
 			all_weights['variational_encoding'] = {
-				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean'),
-				'out_log_sigma': tf.Variable(xavier_init(n_input, n_z),name='out_log_sigma')}
+				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean',trainable=embeddings_trainable),
+				'out_log_sigma': tf.Variable(xavier_init(n_input, n_z),name='out_log_sigma',trainable=embeddings_trainable)}
 			
 		else:
 			all_weights['biases_variational_encoding'] = {
-				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb')}
+				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb',trainable=embeddings_trainable)}
 			all_weights['variational_encoding'] = {
-				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean')}
+				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean',trainable=embeddings_trainable)}
 			
+		self.untrainable_variables=all_weights['input_meaning'].values()+all_weights['biases_variational_encoding'].values()+all_weights['variational_encoding'].values()
 		if mid_vae:
 			all_weights['biases_middle_encoding'] = {
 				'out_mean': tf.Variable(tf.zeros([n_z_m], dtype=tf.float32),name='mid_out_meanb'),
@@ -350,9 +457,11 @@ class VariationalAutoencoder(object):
 				'out_mean': tf.Variable(tf.zeros([n_z_m], dtype=tf.float32),name='mid_out_meanb')}
 			all_weights['middle_encoding'] = {
 				'out_mean': tf.Variable(xavier_init(n_lstm_input, n_z_m),name='mid_out_mean'),
-				'affine_weight': tf.Variable(xavier_init(n_z_m, n_lstm_input),name='mid_affine_weight'),
-				'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='mid_affine_bias')}
+				'affine_weight': tf.Variable(xavier_init(n_z_m, n_z_m_2),name='mid_affine_weight'),
+				'affine_bias': tf.Variable(tf.zeros(n_z_m_2),name='mid_affine_bias')}
 		self.lstm=tf.contrib.rnn.BasicLSTMCell(n_lstm_input)
+		if lstm_stack>1:
+			self.lstm=tf.contrib.rnn.MultiRNNCell([self.lstm]*lstm_stack)
 		all_weights['LSTM'] = {
 			'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='affine_weight2'),
 			'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='affine_bias2'),
@@ -466,16 +575,16 @@ class VariationalAutoencoder(object):
 			print tf.test.compute_gradient_error(self.x,np.array([self.batch_size,self.n_words]),self.loss,[self.batch_size],extra_feed_dict={self.caption_placeholder: y, self.mask: mask})
 			exit()
 		else:
-			opt, cost,shit = self.sess.run((self.optimizer, self.loss,all_the_f_one_h), 
+			opt, cost,shit = self.sess.run((self.optimizer, self.loss,self.debug), 
 									  feed_dict={self.x: X, self.caption_placeholder: y, self.mask: mask})
 			# print shit
-		return cost
+		return cost,shit
 		
 	def _build_gen(self):
 		#same setup as `_create_network` function 
 		network_weights = self._initialize_weights(**self.network_architecture)
 		if form2:
-			start_token_tensor=tf.constant((np.zeros([self.batch_size,16])).astype(np.float32),dtype=tf.float32)
+			start_token_tensor=tf.constant((np.zeros([self.batch_size,binary_dim])).astype(np.float32),dtype=tf.float32)
 		else:
 			start_token_tensor=tf.constant((np.zeros([self.batch_size])).astype(np.int32),dtype=tf.int32)
 		self.network_weights=network_weights
@@ -570,14 +679,14 @@ def bin_to_int(a):
 	
 
 def train(network_architecture, learning_rate=0.001,
-		  batch_size=100, training_epochs=10, display_step=20,gen=False,ctrain=False,test=False):
+		  batch_size=100, training_epochs=10, display_step=2,gen=False,ctrain=False,test=False):
 	if should_decay and not gen:
 		global_step=tf.Variable(0,trainable=False)
 		learning_rate = tf.train.exponential_decay(learning_rate, global_step,
                                            all_samps, 0.95, staircase=True)
 	vae = VariationalAutoencoder(network_architecture, 
 								 learning_rate=learning_rate, 
-								 batch_size=batch_size,generative=gen,ctrain=ctrain,test=test)
+								 batch_size=batch_size,generative=gen,ctrain=ctrain,test=test,global_step=global_step)
 	# Training cycle
 	# if test:
 	# 	maxlen=network_architecture['maxlen']
@@ -593,16 +702,23 @@ def train(network_architecture, learning_rate=0.001,
 		
 		np.random.shuffle(indlist)
 		testify=False
+		avg_loss=0
 		for i in range(total_batch):
+			break
 			batch_xs = X[indlist[i*batch_size:(i+1)*batch_size]]
 
 			# Fit training using batch data
 			if epoch==2 and i ==0:
 				testify=True
-			cost = vae.partial_fit(batch_xs,y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),mask[indlist[i*batch_size:(i+1)*batch_size]],testify=testify)
+			cost,loss = vae.partial_fit(batch_xs,y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),mask[indlist[i*batch_size:(i+1)*batch_size]],testify=testify)
 
 			# Compute average loss
-			avg_cost += np.sum(cost) / n_samples * batch_size
+			avg_cost = avg_cost * i /(i+1) +cost/(i+1)
+			avg_loss=avg_loss*i/(i+1)+cost/(i+1)
+			# if i% display_step==0:
+			# 	print avg_cost,avg_loss
+			if epoch == 0 and i==0:
+				costs.append(avg_cost)
 			
 
 		
@@ -612,8 +728,8 @@ def train(network_architecture, learning_rate=0.001,
 		if epoch % display_step == 0 or epoch==1:
 			if should_save:
 				print 'saving'
-				vae.saver.save(vae.sess, model_path+'model')
-				pkl.dump(costs,open('100_256_45000_allwords_results.pkl','wb'))
+				vae.saver.save(vae.sess, os.path.join(model_path,'model'))
+				pkl.dump(costs,open(loss_output_path,'wb'))
 			print("Epoch:", '%04d' % (epoch+1), 
 				  "cost=", avg_cost)
 
@@ -622,38 +738,79 @@ def train(network_architecture, learning_rate=0.001,
 
 if __name__ == "__main__":
 
+	import sys
 	form2=True
 	vanilla=True
+	if sys.argv[1]!='vanilla':
+		vanilla=False
 	mid_vae=False
+	if sys.argv[2]=='mid_vae':
+		mid_vae=True
 	same_embedding=False
 	clip_grad=True
+	if sys.argv[3]!='clip':
+		clip_grad=False
 	should_save=True
 	should_train=True
 	# should_train=not should_train
-	should_continue=False
+	should_continue=True
 	should_decay=True
 	zero_end_tok=True
-	training_epochs=10000
-	batch_size=500
+	training_epochs=int(sys.argv[13])
+	batch_size=int(sys.argv[4])
+	onehot=False
+	embeddings_trainable=False
+	if sys.argv[5]!='transfer':
+		embeddings_trainable=True
+	transfertype2=True
+	binary_dim=int(sys.argv[6])
 	all_the_f_one_h=[]
 	if not zero_end_tok:
-		X, y, mask, _map = load_text(2**16-4)
+		X, y, mask, _map = load_text(2**binary_dim-4)
 	else:
-		X, y, mask, _map = load_text(2**16-3)
-	n_input =16
+		X, y, mask, _map = load_text(2**binary_dim-3)
+	n_input =binary_dim
 	n_samples = 30000
-	lstm_dim=256
-	model_path = './models2/'
+	lstm_dim=int(sys.argv[7])
+	model_path = sys.argv[8]
+	vartype=''
+	transfertype=''
+	maxlen=int(sys.argv[9])+2
+	n_z=int(sys.argv[10])
+	n_z_m=int(sys.argv[11])
+	n_z_m_2=int(sys.argv[12])
+	if not vanilla:
+		vartype='var'
+	if not embeddings_trainable:
+		transfertype='transfer'
+	cliptype=''
+	if clip_grad:
+		cliptype='clip'
+	use_ctc=False
+	losstype=''
+	if sys.argv[14]=='ctc_loss':
+		use_ctc=True
+		losstype='ctc'
+	lstm_stack=int(sys.argv[15])
+	use_bdlstm=False
+	bdlstmtype=''
+	if sys.argv[16]!='forward':
+		use_bdlstm=True
+		bdlstmtype='bdlstm'
+	model_path=bdlstmtype+str(lstm_stack)+model_path
+	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%s%sdefdef%s.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(losstype),str(cliptype),str(vartype),str(transfertype))
 	all_samps=len(X)
+	n_samples=all_samps
 	# X, y = X[:n_samples, :], y[:n_samples, :]
 
 	network_architecture = \
-		dict(maxlen=32, # 2nd layer decoder neurons
+		dict(maxlen=maxlen, # 2nd layer decoder neurons
 			 n_input=n_input, # One hot encoding input
 			 n_lstm_input=lstm_dim, # LSTM cell size
-			 n_z=512, # dimensionality of latent space
-			 n_z_m=1024,
-			 )  
+			 n_z=n_z, # dimensionality of latent space
+			 n_z_m=n_z_m,
+			 n_z_m_2=n_z_m_2
+			 ) 
 
 
 	if should_train:

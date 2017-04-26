@@ -13,6 +13,9 @@ from sklearn.feature_extraction.text import CountVectorizer
 from collections import defaultdict
 import pickle as pkl
 
+import itertools
+
+import os
 
 def load_text(n,num_samples=None):
 	# fname = 'Oxford_English_Dictionary.txt'
@@ -110,10 +113,24 @@ def get_one_hot_map(to_def,corpus,n):
 	print (len(words))
 	i=0
 	# random.shuffle(words)
-	for word in words:
-		i+=1
-		_map[word]=i
-		rev_map[i]=word
+	for num_bits in range(binary_dim):
+		for bit_config in itertools.combinations_with_replacement(range(binary_dim),num_bits+1):
+			bitmap=np.zeros(binary_dim)
+			bitmap[np.array(bit_config)]=1
+			num=bitmap*(2** np.arange(binary_dim ))
+			num=np.sum(num).astype(np.uint32)
+			word=words[i]
+			_map[word]=num
+			rev_map[num]=word
+			i+=1
+			if i>=len(words):
+				break
+		if i>=len(words):
+				break
+	# 	for word in words:
+	# 		i+=1
+	# 		_map[word]=i
+	# 		rev_map[i]=word
 	rev_map[n+1]='<UNK>'
 	if zero_end_tok:
 		rev_map[0]='.'
@@ -124,7 +141,22 @@ def get_one_hot_map(to_def,corpus,n):
 	print (len(list(uniq.items())))
 	# print rev_map
 	return _map,rev_map
-
+def map_word_emb(corpus,_map):
+	### NOTE: ONLY WORKS ON TARGET WORD (DOES NOT HANDLE UNK PROPERLY)
+	rtn=[]
+	rtn2=[]
+	for word in corpus:
+		mapped=_map[word]
+		rtn.append(mapped)
+		if get_rand_vec:
+			mapped_rand=random.choice(list(_map.keys()))
+			while mapped_rand==word:
+				mapped_rand=random.choice(list(_map.keys()))
+			mapped_rand=_map[mapped_rand]
+			rtn2.append(mapped_rand)
+	if get_rand_vec:
+		return np.array(rtn),np.array(rtn2)
+	return np.array(rtn)
 def map_one_hot(corpus,_map,maxlen,n):
 	if maxlen==1:
 		if not form2:
@@ -179,8 +211,10 @@ def map_one_hot(corpus,_map,maxlen,n):
 			for i in range(min(len(line),maxlen)):
 				# if line[i] not in _map:
 				# 	nopes+=1
-
-				mapped=_map[line[i]]
+				if np.random.random()>word_drop_prob:
+					mapped=_map[line[i]]
+				else:
+					mapped=_map['<UNK>']
 				if form2 and not onehot2:
 					binrep=(1&(mapped/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
 					rtn[l,i+1,:]=binrep
@@ -240,9 +274,11 @@ class VariationalAutoencoder(object):
 		
 		# tf Graph input
 		self.n_words=network_architecture['n_input']
-
+		target_dim=network_architecture['target_dim']
+		if transfer_to_softmax:
+			target_dim=self.n_words
 		if not form2:
-			self.x = tf.placeholder(tf.float32, [None,self.n_words],name='x_in')
+			self.x = tf.placeholder(tf.float32, [None,target_dim],name='x_in')
 		else:
 			n_words=self.n_words
 			if onehot2:
@@ -250,7 +286,7 @@ class VariationalAutoencoder(object):
 			if onehot:
 				n_words=2**n_words
 
-			self.x = tf.placeholder(tf.float32, [None,n_words],name='x_in')
+			self.x = tf.placeholder(tf.float32, [None,target_dim],name='x_in')
 		self.intype=type(self.x)
 		self.global_step=global_step
 		if not form2:
@@ -265,6 +301,7 @@ class VariationalAutoencoder(object):
 			self._create_network()
 			# Define loss function based variational upper-bound and 
 			# corresponding optimizer
+			torestore=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
 			self._create_loss_optimizer()
 			self.test=test
 				
@@ -280,10 +317,27 @@ class VariationalAutoencoder(object):
 
 		# Launch the session
 		self.sess = tf.InteractiveSession()
-		self.saver = tf.train.Saver(max_to_keep=100)
-		self.sess.run(init)
-		if ctrain:
-			self.saver.restore(self.sess, tf.train.latest_checkpoint(model_path))
+		if transfer_to_softmax:
+			var_list=[]
+			if not embeddings_trainable:
+				var_list=self.first_half
+				print var_list
+				self.saver = tf.train.Saver(var_list=var_list,max_to_keep=100)
+				self.sess.run(init)
+				if ctrain:
+					self.saver.restore(self.sess, tf.train.latest_checkpoint(model_path.replace('transfer','target')))
+				self.saver=tf.train.Saver(max_to_keep=100)
+			else:
+				self.saver=tf.train.Saver(var_list=torestore)
+				self.sess.run(init)
+				if ctrain:
+					self.saver.restore(self.sess,tf.train.latest_checkpoint(model_path))
+		else:
+			self.saver=tf.train.Saver(max_to_keep=100)
+			self.sess.run(init)
+			if ctrain:
+				self.saver.restore(self.sess, tf.train.latest_checkpoint(model_path))
+			
 	
 	def _create_network(self):
 		# Initialize autoencode network weights and biases
@@ -298,7 +352,8 @@ class VariationalAutoencoder(object):
 			embedded_input_KLD_loss=tf.reshape(embedded_input_KLD_loss,[-1,self.network_architecture['maxlen']])[:,1:]
 		encoder_input=embedded_input[:,1:,:]
 		cell=tf.contrib.rnn.BasicLSTMCell(self.network_architecture['n_lstm_input'])
-		cell=tf.contrib.rnn.MultiRNNCell([cell]*3)
+		if lstm_stack>1:
+			cell=tf.contrib.rnn.MultiRNNCell([cell]*lstm_stack)
 		encoder_outs,encoder_states=rnn.dynamic_rnn(cell,encoder_input,sequence_length=seqlen,dtype=tf.float32,time_major=False)
 		ix_range=tf.range(0,self.batch_size,1)
 		ixs=tf.expand_dims(ix_range,-1)
@@ -316,9 +371,10 @@ class VariationalAutoencoder(object):
 		input_embedding,input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
 		print (input_embedding.shape)
 		# print embedded_input_KLD_loss.shape,self.mask[:,1:].shape
-		loss = tf.reduce_sum(input_embedding_KLD_loss)/float(self.batch_size)
+		KLD_penalty=tf.tanh(tf.cast(self.global_step,tf.float32)/1600.0)
+		loss = tf.reduce_sum(input_embedding_KLD_loss)/float(self.batch_size)*KLD_penalty
 		self.l1=loss
-		loss+=tf.reduce_sum(embedded_input_KLD_loss*self.mask[:,1:])/tf.reduce_sum(self.mask[:,1:])
+		loss+=tf.reduce_sum(embedded_input_KLD_loss*self.mask[:,1:])/tf.reduce_sum(self.mask[:,1:])*KLD_penalty
 		self.l2=loss
 		# with tf.variable_scope("RNN"):
 		# 	for i in range(self.network_architecture['maxlen']): 
@@ -350,25 +406,47 @@ class VariationalAutoencoder(object):
 		# 			# 	onehot=self.caption_placeholder[:,i,:]
 
 		logit = tf.matmul(input_embedding, network_weights['LSTM']['encoding_weight']) + network_weights['LSTM']['encoding_bias']
-		if form2 and not onehot:
-			# best_word=tf.nn.softmax(logit)
+		# if form2 and not onehot:
+		# 	# best_word=tf.nn.softmax(logit)
 			
-			# best_word=tf.round(best_word)
-			# all_the_f_one_h.append(best_word)
-			xentropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logit, labels=self.x)
-			print (logit.shape)
-			# self.debshit=(logit[:20])
-			# self.debshit=[tf.nn.sigmoid(logit)[:20],self.x[:20]]
-			xentropy1=xentropy
+		# 	# best_word=tf.round(best_word)
+		# 	# all_the_f_one_h.append(best_word)
+		# 	xentropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logit, labels=self.x)
+		# 	print (logit.shape)
+		# 	# self.debshit=(logit[:20])
+		# 	# self.debshit=[tf.nn.sigmoid(logit)[:20],self.x[:20]]
+		# 	xentropy1=xentropy
+		# 	xentropy=tf.reduce_sum(xentropy,reduction_indices=-1)
+		# 	# self.debshit=xentropy[:15]
+		# 	self.debshit=[tf.concat([tf.cast(xentropy1[:15]*10,),tf.expand_dims(xentropy[:15],-1)],axis=-1)]
+		# else:
+		# 	xentropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit, labels=self.x)
+		# 	self.debshit=xentropy[:15]
+		
+		if not get_rand_vec and not transfer_to_softmax:
+			print 'here'
+			normed_embedding= tf.nn.l2_normalize(logit, dim=-1)
+			normed_target=tf.nn.l2_normalize(self.x,dim=-1)
+			cos_sim=(tf.reduce_sum(tf.multiply(normed_embedding,normed_target),axis=-1))
+			self.exp_loss=tf.reduce_mean((-cos_sim))
+			# self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
+			loss += tf.reduce_mean(-(cos_sim))
+		elif transfer_to_softmax:
+			xentropy=tf.nn.sigmoid_cross_entropy_with_logits(logits=logit,labels=self.x)
+			self.exp_loss=tf.reduce_mean(tf.reduce_sum(xentropy,reduction_indices=-1))
 			xentropy=tf.reduce_sum(xentropy,reduction_indices=-1)
-			# self.debshit=xentropy[:15]
-			self.debshit=[tf.concat([tf.cast(xentropy1[:15]*10,),tf.expand_dims(xentropy[:15],-1)],axis=-1)]
+			loss+=tf.reduce_mean(xentropy)
+			
 		else:
-			xentropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit, labels=self.x)
-			self.debshit=xentropy[:15]
-
-		self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
-		loss += (self.exp_loss)
+			normed_embedding= tf.nn.l2_normalize(logit, dim=-1)
+			normed_target=tf.nn.l2_normalize(self.x,dim=-1)
+			cos_sim=(tf.reduce_sum(tf.multiply(normed_embedding,normed_target),axis=-1))
+			self.v=tf.placeholder(tf.float32, [None,self.network_architecture['target_dim']],name='v_in')
+			normed_rand=tf.nn.l2_normalize(self.v,dim=-1)
+			self.exp_loss=.1-cos_sim-tf.reduce_sum(tf.multiply(normed_embedding,normed_rand),axis=-1)
+			cos_sim=tf.square(self.exp_loss)
+			self.exp_loss=tf.reduce_mean(self.exp_loss)
+			loss+=tf.reduce_mean(cos_sim)
 		# loss += tf.log(self.exp_loss)
 
 
@@ -377,25 +455,26 @@ class VariationalAutoencoder(object):
 		self.loss=loss
 	
 	def _initialize_weights(self, n_lstm_input, maxlen, 
-							n_input, n_z, n_z_m,n_z_m_2):
+							n_input, n_z, n_z_m,n_z_m_2,target_dim):
 		all_weights = dict()
+		self.first_half=[]
 		if not same_embedding:
 			all_weights['input_meaning'] = {
-				'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='affine_weight'),
-				'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='affine_bias')}
+				'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='affine_weight',trainable=embeddings_trainable),
+				'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='affine_bias',trainable=embeddings_trainable)}
 		if not vanilla:
 			all_weights['biases_variational_encoding'] = {
-				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb'),
-				'out_log_sigma': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_log_sigmab')}
+				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb',trainable=embeddings_trainable),
+				'out_log_sigma': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_log_sigmab',trainable=embeddings_trainable)}
 			all_weights['variational_encoding'] = {
-				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean'),
-				'out_log_sigma': tf.Variable(xavier_init(n_input, n_z),name='out_log_sigma')}
+				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean',trainable=embeddings_trainable),
+				'out_log_sigma': tf.Variable(xavier_init(n_input, n_z),name='out_log_sigma',trainable=embeddings_trainable)}
 			
 		else:
 			all_weights['biases_variational_encoding'] = {
-				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb')}
+				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb',trainable=embeddings_trainable)}
 			all_weights['variational_encoding'] = {
-				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean')}
+				'out_mean': tf.Variable(xavier_init(n_input, n_z),name='out_mean',trainable=embeddings_trainable)}
 			
 		if mid_vae:
 			all_weights['biases_middle_encoding'] = {
@@ -404,26 +483,30 @@ class VariationalAutoencoder(object):
 			all_weights['middle_encoding'] = {
 				'out_mean': tf.Variable(xavier_init(n_lstm_input, n_z_m),name='mid_out_mean'),
 				'out_log_sigma': tf.Variable(xavier_init(n_lstm_input, n_z_m),name='mid_out_log_sigma'),
-				'affine_weight': tf.Variable(xavier_init(n_z_m, n_z_m_2,10),name='mid_affine_weight'),
+				'affine_weight': tf.Variable(xavier_init(n_z_m, n_z_m_2,1.0),name='mid_affine_weight'),
 				'affine_bias': tf.Variable(tf.zeros(n_z_m_2),name='mid_affine_bias')}
+			
 		else:
 			all_weights['biases_middle_encoding'] = {
 				'out_mean': tf.Variable(tf.zeros([n_z_m], dtype=tf.float32),name='mid_out_meanb')}
 			all_weights['middle_encoding'] = {
 				'out_mean': tf.Variable(xavier_init(n_lstm_input, n_z_m),name='mid_out_mean'),
-				'affine_weight': tf.Variable(xavier_init(n_z_m, n_z_m_2,10),name='mid_affine_weight'),
+				'affine_weight': tf.Variable(xavier_init(n_z_m, n_z_m_2,1.0),name='mid_affine_weight'),
 				'affine_bias': tf.Variable(tf.zeros(n_z_m_2),name='mid_affine_bias')}
+		self.first_half+=all_weights['input_meaning'].values()+all_weights['biases_variational_encoding'].values()+all_weights['variational_encoding'].values()
 		self.lstm=tf.contrib.rnn.BasicLSTMCell(n_lstm_input)
 		encode_dim=n_input
 		if onehot2:
 			encode_dim=np.log2(encode_dim).astype(int)
 		if onehot:
 			encode_dim=2**encode_dim
+		if transfer_to_softmax:
+			target_dim=encode_dim
 		all_weights['LSTM'] = {
 			'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='affine_weight2'),
 			'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='affine_bias2'),
-			'encoding_weight': tf.Variable(xavier_init(n_z_m_2,encode_dim),name='encoding_weight'),
-			'encoding_bias': tf.Variable(tf.zeros(encode_dim),name='encoding_bias'),
+			'encoding_weight': tf.Variable(xavier_init(n_z_m_2,target_dim),name='encoding_weight'),
+			'encoding_bias': tf.Variable(tf.zeros(target_dim),name='encoding_bias'),
 			'lstm': self.lstm}
 		return all_weights
 	
@@ -441,9 +524,9 @@ class VariationalAutoencoder(object):
 			else:
 				z,vae_loss=self._vae_sample_mid(ve_weights[0],ve_weights[1],tf.one_hot(x,depth=self.network_architecture['n_input']))
 				all_the_f_one_h.append(tf.one_hot(x,depth=self.network_architecture['n_input']))
-		z=tf.nn.relu(z)
+		# z=tf.nn.relu(z)
 		embedding=tf.matmul(z,lstm_weights['affine_weight'])+lstm_weights['affine_bias']
-		embedding=tf.nn.relu(embedding)
+		# embedding=tf.nn.relu(embedding)
 		return embedding,vae_loss
 
 	def _get_word_embedding(self, ve_weights, lstm_weights, x,logit=False):
@@ -532,7 +615,7 @@ class VariationalAutoencoder(object):
 		self.test_op = \
 			tf.test.compute_gradient_error(self.x,np.array([self.batch_size,self.n_words]),self.loss,[1],extra_feed_dict={})
 		
-	def partial_fit(self, X,y,mask,testify=False):
+	def partial_fit(self, X,y,mask,testify=False,batch_vs=None):
 		"""Train model based on mini-batch of input data.
 		
 		Return cost of mini-batch.
@@ -541,8 +624,13 @@ class VariationalAutoencoder(object):
 			print (tf.test.compute_gradient_error(self.x,np.array([self.batch_size,self.n_words]),self.loss,[self.batch_size],extra_feed_dict={self.caption_placeholder: y, self.mask: mask}))
 			exit()
 		else:
-			opt, cost,shit,l1,l2,exp_loss = self.sess.run((self.optimizer, self.loss,self.debshit,self.l1,self.l2,self.exp_loss), 
-									  feed_dict={self.x: X, self.caption_placeholder: y, self.mask: mask})
+
+			if not get_rand_vec:
+				opt, cost,shit,l1,l2,exp_loss = self.sess.run((self.optimizer, self.loss,self.debshit,self.l1,self.l2,self.exp_loss), 
+										feed_dict={self.x: X, self.caption_placeholder: y, self.mask: mask})
+			else:
+				opt, cost,shit,l1,l2,exp_loss = self.sess.run((self.optimizer, self.loss,self.debshit,self.l1,self.l2,self.exp_loss), 								  
+									  feed_dict={self.x: X, self.caption_placeholder: y, self.mask: mask,self.v:batch_vs})
 			if testify:
 				print (shit,l1,l2)
 			# print (shit)
@@ -663,35 +751,57 @@ def train(network_architecture, learning_rate=0.001,
 	if gen:
 		return vae
 	costs=[[],[]]
-	indlist=np.arange(all_samps).astype(int)
+	indlist=range(all_samps)
 	import random
+	emb=pkl.load(open('training_data/D_cbow_pdw_8B.pkl','rb'))
+	if get_rand_vec:
+			X_t,V_t=map_word_emb(X,emb)
 	for epoch in range(training_epochs):
 		avg_cost = 0.
 		avg_log_cost = 0.
 		total_batch = int(n_samples / batch_size)
 		# Loop over all batches
 		
-		np.random.shuffle(indlist)
-		random.shuffle(X)
+		# random.shuffle(indlist)
+		# random.shuffle(X)
 		testify=False
+		
 		for i in range(total_batch):
-			batch_xs = map_one_hot(X[i*batch_size:(i+1)*batch_size],forward_map,1,n_input)
-			batch_ys,mask=map_one_hot(y[i*batch_size:(i+1)*batch_size],forward_map,network_architecture['maxlen']-2,n_input)
+			break
+			inds=itemgetter(*random.sample(indlist,batch_size))
+			# inds=itemgetter(*indlist[i*batch_size:(i+1)*batch_size])
+			if not get_rand_vec and not transfer_to_softmax:
+				batch_xs = map_word_emb(inds(X),emb)
+			elif transfer_to_softmax:
+				batch_xs=map_one_hot(inds(X),forward_map,1,n_input)
+			else:
+				batch_xs,batch_vs=X_t[i*batch_size:(i+1)*batch_size],V_t[i*batch_size:(i+1)*batch_size]
+			# batch_xs = map_one_hot(X[i*batch_size:(i+1)*batch_size],forward_map,1,n_input)
+			batch_ys,mask=map_one_hot(inds(y),forward_map,network_architecture['maxlen']-2,n_input)
+			if i==0:
+				print batch_ys.shape
 			batch_ys=batch_ys.astype(np.uint32)
 			# Fit training using batch data
 			if epoch==21 and i ==0:
 				testify=True
 			else:
 				testify=False
-			cost,exp_loss = vae.partial_fit(batch_xs,batch_ys,mask,testify=testify)
-			if i%display_step:
-				print (cost,exp_loss)
+			if not get_rand_vec:
+				cost,exp_loss = vae.partial_fit(batch_xs,batch_ys,mask,testify=testify)
+			else:
+				cost,exp_loss = vae.partial_fit(batch_xs,batch_ys,mask,testify=testify,batch_vs=batch_vs)
+			
 			# if i==45:
 			# 	exit()
 
 			# Compute average loss
-			avg_cost += np.sum(exp_loss) / n_samples * batch_size
-			avg_log_cost += np.sum(cost) / n_samples * batch_size
+			avg_cost = (np.sum(exp_loss)+avg_cost * (i)) / (i+1)
+			avg_log_cost = (np.sum(cost)+avg_log_cost * (i)) / (i+1)
+			# if i%display_step:
+			# 	print (avg_log_cost,cost)
+			if epoch==0 and i==0:
+				costs[0].append(avg_cost)
+				costs[1].append(avg_log_cost)
 			
 
 		
@@ -702,56 +812,96 @@ def train(network_architecture, learning_rate=0.001,
 		if epoch % display_step == 0 or epoch==1:
 			if should_save:
 				print ('saving')
-				vae.saver.save(vae.sess, model_path+'model')
-				pkl.dump(costs,open('100_256_45000_allwords_results.pkl','wb'))
+				print [x.name for x in vae.saver._var_list]
+				print model_path+'model'
+				vae.saver.save(vae.sess, os.path.join(model_path,'model'))
+				pkl.dump(costs,open(loss_output_path,'wb'))
 			print("Epoch:", '%04d' % (epoch+1), 
-				  "cost=", avg_cost)
+				  "cost=", avg_cost, 'loss=',avg_log_cost)
 
 
 	return vae
 
 if __name__ == "__main__":
-
+	from operator import itemgetter
+	import sys
 	form2=True
 	vanilla=True
+	if sys.argv[1]!='vanilla':
+		vanilla=False
 	mid_vae=False
-	onehot=True
-	onehot2=False
+	if sys.argv[2]=='mid_vae':
+		mid_vae=True
 	same_embedding=False
-	clip_grad=False
+	clip_grad=True
+	if sys.argv[3]!='clip':
+		clip_grad=False
 	should_save=True
 	should_train=True
 	# should_train=not should_train
-	should_continue=False
+	should_continue=True
 	should_decay=True
 	zero_end_tok=True
-	training_epochs=10000
-	batch_size=500
-	binary_dim=16
+	training_epochs=int(sys.argv[15])
+	transfer_to_softmax=eval(sys.argv[16])
+	should_continue=transfer_to_softmax
+	batch_size=int(sys.argv[4])
+	onehot=False
+	onehot2=False
+	get_rand_vec=False
+	embeddings_trainable=False
+	if sys.argv[5]!='transfer':
+		embeddings_trainable=True
+	transfertype2=True
+	binary_dim=int(sys.argv[6])
 	all_the_f_one_h=[]
-	maxlen=32
 	if not zero_end_tok:
-		X, y, mask, _map,forward_map = load_text(2**binary_dim-4)
+		X, y, mask, _map, forward_map = load_text(2**binary_dim-4)
 	else:
-		X, y, mask, _map,forward_map = load_text(2**binary_dim-3)
+		X, y, mask, _map, forward_map = load_text(2**binary_dim-3)
 	n_input =binary_dim
-	if onehot2:
-		n_input=2**n_input
 	n_samples = 30000
-	lstm_dim=512
-	model_path = './modelstemp/'
+	lstm_dim=int(sys.argv[7])
+	model_path = sys.argv[8]
+	vartype=''
+	transfertype=''
+	maxlen=int(sys.argv[9])+2
+	n_z=int(sys.argv[10])
+	n_z_m=int(sys.argv[11])
+	n_z_m_2=int(sys.argv[12])
+	if not vanilla:
+		vartype='var'
+	if not embeddings_trainable:
+		transfertype='transfer'
+	emb_type=''
+	if transfer_to_softmax:
+		emb_type='softmax'
+	cliptype=''
+	if clip_grad:
+		cliptype='clip'
+	lstm_stack=int(sys.argv[17])
+	use_bdlstm=False
+	bdlstmtype=''
+	if sys.argv[18]!='forward':
+		use_bdlstm=True
+		bdlstmtype='bdlstm'
+	model_path=bdlstmtype+str(lstm_stack)+model_path
+	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%semb%s%s.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(cliptype),str(vartype),str(emb_type),str(transfertype))
 	all_samps=len(X)
 	n_samples=all_samps
+	target_dim=int(sys.argv[13])
+	word_drop_prob=float(sys.argv[14])
 	# X, y = X[:n_samples, :], y[:n_samples, :]
 
 	network_architecture = \
 		dict(maxlen=maxlen, # 2nd layer decoder neurons
 			 n_input=n_input, # One hot encoding input
 			 n_lstm_input=lstm_dim, # LSTM cell size
-			 n_z=1024, # dimensionality of latent space
-			 n_z_m=512,
-			 n_z_m_2=256
-			 )  
+			 n_z=n_z, # dimensionality of latent space
+			 n_z_m=n_z_m,
+			 n_z_m_2=n_z_m_2,
+			 target_dim=target_dim
+			 )   
 
 
 	if should_train:

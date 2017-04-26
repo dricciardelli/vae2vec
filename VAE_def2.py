@@ -187,7 +187,7 @@ class VariationalAutoencoder(object):
 	See "Auto-Encoding Variational Bayes" by Kingma and Welling for more details.
 	"""
 	def __init__(self, network_architecture, transfer_fct=tf.nn.softplus, 
-				 learning_rate=0.001, batch_size=100,generative=False,ctrain=False,test=False):
+				 learning_rate=0.001, batch_size=100,generative=False,ctrain=False,test=False,global_step=None):
 		self.network_architecture = network_architecture
 		self.transfer_fct = transfer_fct
 		self.learning_rate = learning_rate
@@ -207,6 +207,7 @@ class VariationalAutoencoder(object):
 			self.caption_placeholder = tf.placeholder(tf.float32, [None, network_architecture["maxlen"],self.n_words],name='caption_placeholder')
 			print self.caption_placeholder.shape
 		self.mask=tf.placeholder(tf.float32, [None, network_architecture["maxlen"]],name='mask')
+		self.global_step=global_step
 		
 		# Create autoencoder network
 		if not generative:	
@@ -377,7 +378,8 @@ class VariationalAutoencoder(object):
 			return z,KLD
 
 	def _create_loss_optimizer(self):
-		
+		if self.global_step is None:
+			self.global_step=tf.Variable(0,trainable=False)
 		if clip_grad:
 			opt_func = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate)
 
@@ -385,10 +387,10 @@ class VariationalAutoencoder(object):
 
 			grads, _ = tf.clip_by_global_norm(tf.gradients(self.loss, tvars), .1)
 
-			self.optimizer = opt_func.apply_gradients(zip(grads, tvars))
+			self.optimizer = opt_func.apply_gradients(zip(grads, tvars),global_step=self.global_step)
 		else:
 			self.optimizer = \
-				tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss)
+				tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss,global_step=self.global_step)
 
 	def _create_loss_test(self):
 		self.test_op = \
@@ -508,13 +510,13 @@ def bin_to_int(a):
 
 def train(network_architecture, learning_rate=0.001,
 		  batch_size=100, training_epochs=10, display_step=20,gen=False,ctrain=False,test=False):
+	global_step=tf.Variable(0,trainable=False)
 	if should_decay and not gen:
-		global_step=tf.Variable(0,trainable=False)
 		learning_rate = tf.train.exponential_decay(learning_rate, global_step,
                                            all_samps, 0.95, staircase=True)
 	vae = VariationalAutoencoder(network_architecture, 
 								 learning_rate=learning_rate, 
-								 batch_size=batch_size,generative=gen,ctrain=ctrain,test=test)
+								 batch_size=batch_size,generative=gen,ctrain=ctrain,test=test,global_step=global_step)
 	# Training cycle
 	# if test:
 	# 	maxlen=network_architecture['maxlen']
