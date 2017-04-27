@@ -774,12 +774,8 @@ if __name__ == "__main__":
 		losstype='ctc'
 	lstm_stack=int(sys.argv[16])
 	use_bdlstm=False
-	bdlstmtype=''
-	if sys.argv[17]!='forward':
-		use_bdlstm=True
-		bdlstmtype='bdlstm'
-	model_path=bdlstmtype+str(lstm_stack)+model_path
-	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%s%svaedef%s.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(losstype),str(cliptype),str(vartype),str(transfertype))
+
+	loss_output_path= 'losses/%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%s%svaedef%s.pkl'%(str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(losstype),str(cliptype),str(vartype),str(transfertype))
 	all_samps=len(X)
 	n_samples=all_samps
 	# X, y = X[:n_samples, :], y[:n_samples, :]

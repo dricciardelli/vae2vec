@@ -3,6 +3,11 @@ embtransfer=modelsvarembtransfer1000
 defdef=modelsvardefdef1000ctc
 vaedef=modelsvarvaedef1000ctc
 
+mkdir -p $embtarget
+mkdir -p $embtransfer
+mkdir -p $defdef
+mkdir -p $vaedef
+
 lstm_hidden=1024
 input_dim=19
 clip_grad=clip
@@ -27,5 +32,5 @@ lstm_stack=1
 #python def_def.py $vartype $encode_mode $clip_grad $batch_size transfer $input_dim $lstm_hidden $defdef $maxlen $n_z $n_z_m $n_z_m_2 1 $losstype $lstm_stack $bdlstmtype
 #python def_def.py $vartype $encode_mode $clip_grad $batch_size no_transfer $input_dim $lstm_hidden $defdef $maxlen $n_z $n_z_m $n_z_m_2 1 $losstype $lstm_stack $bdlstmtype
 
-#python VAE_def3.py $vartype mid_vae $clip_grad $batch_size transfer $input_dim $lstm_hidden $vaedef $maxlen $n_z $n_z_m $n_z_m_2 $transfertype 1 $losstype $lstm_stack $bdlstmtype
-python VAE_def3.py $vartype mid_vae $clip_grad $batch_size no_transfer $input_dim $lstm_hidden $vaedef $maxlen $n_z $n_z_m $n_z_m_2 no_t_type 10 $losstype $lstm_stack $bdlstmtype
+#python VAE_def3.py $vartype mid_vae $clip_grad $batch_size transfer $input_dim $lstm_hidden $vaedef $maxlen $n_z $n_z_m $n_z_m_2 $transfertype 1 $losstype $lstm_stack 
+python VAE_def3.py $vartype mid_vae $clip_grad $batch_size no_transfer $input_dim $lstm_hidden $vaedef $maxlen $n_z $n_z_m $n_z_m_2 no_t_type 10 $losstype $lstm_stack 
