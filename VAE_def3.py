@@ -299,6 +299,11 @@ class VariationalAutoencoder(object):
 				
 		else:
 			self._build_gen()
+			to_restore=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+			self.untrainable_variables=[x for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES) if x not in self.no_reload]
+			for var in self.untrainable_variables:
+				if var not in self.var_embs:
+					var.trainable=embeddings_trainable
 		
 
 			
@@ -309,8 +314,10 @@ class VariationalAutoencoder(object):
 
 		# Launch the session
 		self.sess = tf.InteractiveSession()
+		print (model_path)
 		if embeddings_trainable:
 			print [x.name for x in to_restore]
+			print 'went into right place'
 			self.saver = tf.train.Saver(var_list=to_restore,max_to_keep=100)
 			saved_path=tf.train.latest_checkpoint(model_path)
 		else:
@@ -319,6 +326,7 @@ class VariationalAutoencoder(object):
 			saved_path=tf.train.latest_checkpoint(model_path.replace('vaedef','defdef'))
 		self.sess.run(init)
 		if ctrain:
+			print(saved_path)
 			self.saver.restore(self.sess, saved_path)
 		self.saver=tf.train.Saver(max_to_keep=100)
 		print [x.name for x in self.saver._var_list]
@@ -662,6 +670,8 @@ def train(network_architecture, learning_rate=0.001,
 		global_step=tf.Variable(0,trainable=False)
 		learning_rate = tf.train.exponential_decay(learning_rate, global_step,
                                            all_samps, 0.95, staircase=True)
+	else:
+		global_step=tf.Variable(0,trainable=False)
 	vae = VariationalAutoencoder(network_architecture, 
 								 learning_rate=learning_rate, 
 								 batch_size=batch_size,generative=gen,ctrain=ctrain,test=test,global_step=global_step)
@@ -799,14 +809,14 @@ if __name__ == "__main__":
 		# print train(network_architecture, training_epochs=training_epochs, batch_size=batch_size,gen=False,ctrain=should_continue,test=True)
 		vae_2d = train(network_architecture, training_epochs=training_epochs, batch_size=batch_size,gen=False,ctrain=should_continue,learning_rate=.005)
 	else:
+		#vae_2d = train(network_architecture, training_epochs=training_epochs, batch_size=batch_size,gen=True,ctrain=True)
 		vae_2d = train(network_architecture, training_epochs=training_epochs, batch_size=batch_size,gen=True,ctrain=True)
-	
 	# #	vae_2d._build_gen()
 		ind_list=np.arange(len(X)).astype(int)
-		np.random.shuffle(ind_list)
-		x_sample = X[ind_list[:1000]]
+		#np.random.shuffle(ind_list)
+		x_sample = X[ind_list[:batch_size]]
 		print x_sample
-		y_sample = y[ind_list[:1000]]
+		y_sample = y[ind_list[:batch_size]]
 		print y_sample
 
 		y_hat = vae_2d.generate(_map,x_sample)
