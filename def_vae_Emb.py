@@ -354,7 +354,13 @@ class VariationalAutoencoder(object):
 		cell=tf.contrib.rnn.BasicLSTMCell(self.network_architecture['n_lstm_input'])
 		if lstm_stack>1:
 			cell=tf.contrib.rnn.MultiRNNCell([cell]*lstm_stack)
-		encoder_outs,encoder_states=rnn.dynamic_rnn(cell,encoder_input,sequence_length=seqlen,dtype=tf.float32,time_major=False)
+		if not use_bdlstm:
+			encoder_outs,encoder_states=rnn.dynamic_rnn(cell,encoder_input,sequence_length=seqlen,dtype=tf.float32,time_major=False)
+		else:
+			backward_cell=tf.contrib.rnn.BasicLSTMCell(self.network_architecture['n_lstm_input'])
+			if lstm_stack>1:
+				backward_cell=tf.contrib.rnn.MultiRNNCell([backward_cell]*lstm_stack)
+			encoder_outs,encoder_states=rnn.bidirectional_dynamic_rnn(cell,backward_cell,encoder_input,sequence_length=seqlen,dtype=tf.float32,time_major=False)
 		ix_range=tf.range(0,self.batch_size,1)
 		ixs=tf.expand_dims(ix_range,-1)
 		to_cat=tf.expand_dims(seqlen-2,-1)
@@ -885,7 +891,6 @@ if __name__ == "__main__":
 	if sys.argv[18]!='forward':
 		use_bdlstm=True
 		bdlstmtype='bdlstm'
-	model_path=bdlstmtype+str(lstm_stack)+model_path
 	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%semb%s%s.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(cliptype),str(vartype),str(emb_type),str(transfertype))
 	all_samps=len(X)
 	n_samples=all_samps
