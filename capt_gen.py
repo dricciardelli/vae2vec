@@ -328,7 +328,7 @@ def train(learning_rate=0.001, continue_training=False):
     sess = tf.InteractiveSession()
     n_words = len(wordtoix)
     maxlen = np.max( [x for x in map(lambda x: len(x.split(' ')), captions) ] )
-    caption_generator = Caption_Generator(dim_in, dim_hidden, dim_embed, batch_size, maxlen+2, n_words, init_b)
+    caption_generator = Caption_Generator(dim_in, dim_hidden, dim_embed, batch_size, maxlen+2, n_words, init_b,n_input=n_input,n_lstm_input=n_lstm_input,n_z=n_z)
 
     loss, image, sentence, mask = caption_generator.build_model()
 
@@ -396,6 +396,9 @@ if __name__=='__main__':
     annotation_path = './data/results_20130124.token'
     import sys
     feats, captions = get_data(annotation_path, feature_path)
+    n_input=19
+    n_lstm_input=1024
+    n_z=512
     if sys.argv[1]=='train':
         train()
     elif sys.argv[1]=='test':
