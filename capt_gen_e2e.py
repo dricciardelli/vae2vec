@@ -76,7 +76,7 @@ def load_text(n,capts,num_samples=None):
     # X = map_one_hot(word_list[:num_samples],_map,1,n)
     # y = (36665, 56210)
     # print _map
-    # y,mask = map_one_hot(capts[:num_samples],_map,maxlen,n)
+    y,mask = map_one_hot(capts[:num_samples],_map,maxlen,n)
     # np.save('X',X)
     # np.save('yc',y)
     # np.save('maskc',mask)
@@ -282,7 +282,7 @@ class Caption_Generator():
         self.from_image=from_image
 
         # declare the variables to be used for our word embeddings
-        self.word_embedding = tf.Variable(tf.random_uniform([self.n_z, self.dim_embed], -0.1, 0.1), name='word_embedding')
+        self.word_embedding = tf.Variable(tf.random_uniform([self.n_lstm_input, self.dim_embed], -0.1, 0.1), name='word_embedding')
 
         self.embedding_bias = tf.Variable(tf.zeros([dim_embed]), name='embedding_bias')
         
@@ -294,13 +294,13 @@ class Caption_Generator():
         self.img_embedding_bias = tf.Variable(tf.zeros([dim_hidden]), name='img_embedding_bias')
 
         # declare the variables to go from an LSTM output to a word encoding output
-        self.word_encoding = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1, 0.1), name='word_encoding')
+        self.word_encoding = tf.Variable(tf.random_uniform([dim_hidden, self.n_lstm_input], -0.1, 0.1), name='word_encoding')
         # initialize this bias variable from the preProBuildWordVocab output
         # optional initialization setter for encoding bias variable 
         if init_b is not None:
             self.word_encoding_bias = tf.Variable(init_b, name='word_encoding_bias')
         else:
-            self.word_encoding_bias = tf.Variable(tf.zeros([n_words]), name='word_encoding_bias')
+            self.word_encoding_bias = tf.Variable(tf.zeros([self.n_lstm_input]), name='word_encoding_bias')
 
         self.embw=tf.Variable(xavier_init(self.n_input,self.n_z),name='embw')
         self.embb=tf.Variable(tf.zeros([self.n_z]),name='embb')
@@ -324,9 +324,9 @@ class Caption_Generator():
         #leverage one-hot sparsity to lookup embeddings fast
         embedded_input,KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'],flat_caption_placeholder,logit=True)
         KLD_loss=tf.multiply(KLD_loss,tf.reshape(mask,[-1,1]))
-        KLD_loss=tf.reduce_sum(KLD_loss)
-        embedded_input=tf.matmul(embedded_input,self.word_embedding)+self.embedding_bias
-        word_embeddings=tf.reshape(embedded_input,[self.batch_size,self.n_lstm_steps,-1])
+        KLD_loss=tf.reduce_sum(KLD_loss)*0
+        word_embeddings=tf.matmul(embedded_input,self.word_embedding)+self.embedding_bias
+        word_embeddings=tf.reshape(word_embeddings,[self.batch_size,self.n_lstm_steps,-1])
         #initialize lstm state
         state = self.lstm.zero_state(self.batch_size, dtype=tf.float32)
         rnn_output=[]
@@ -350,16 +350,23 @@ class Caption_Generator():
                 rnn_output.append(tf.expand_dims(out,1))
         #perform classification of output
         rnn_output=tf.concat(rnn_output,axis=1)
-        rnn_output=tf.reshape(rnn_output,[self.batch_size*self.n_lstm_steps,-1])
+        rnn_output=tf.reshape(rnn_output,[self.batch_size*(self.n_lstm_steps),-1])
         encoded_output=tf.matmul(rnn_output,self.word_encoding)+self.word_encoding_bias
         #get loss
-        xentropy=tf.nn.sparse_softmax_cross_entropy_with_logits(logits=encoded_output,labels=tf.reshape(self.output_placeholder,[-1]))
 
-        #mask zero embeddings
-        masked_xentropy=tf.multiply(tf.reshape(xentropy,[self.batch_size,-1])[:,1:],mask[:,1:])
+        normed_embedding= tf.nn.l2_normalize(encoded_output, dim=-1)
+        normed_target=tf.nn.l2_normalize(embedded_input,dim=-1)
+        cos_sim=tf.multiply(normed_embedding,normed_target)[:,1:]
+        cos_sim=(tf.reduce_sum(cos_sim,axis=-1))
+        cos_sim=tf.reshape(cos_sim,[self.batch_size,-1])
+        cos_sim=tf.reduce_sum(cos_sim[:,1:]*mask[:,1:])
+        cos_sim=cos_sim/tf.reduce_sum(mask[:,1:])
+        self.exp_loss=tf.reduce_sum((-cos_sim))
+        # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
+        total_loss = tf.reduce_sum(-(cos_sim))
         #average over timeseries length
 
-        total_loss=tf.reduce_sum(masked_xentropy)/tf.reduce_sum(mask[:,1:])
+        # total_loss=tf.reduce_sum(masked_xentropy)/tf.reduce_sum(mask[:,1:])
         self.print_loss=total_loss
         total_loss+=KLD_loss/tf.reduce_sum(mask)
         return total_loss, img,  caption_placeholder, mask
@@ -451,7 +458,7 @@ class Caption_Generator():
                 all_the_f_one_h.append(tf.one_hot(x,depth=self.n_input))
 
         embedding=tf.matmul(z,lstm_weights['affine_weight'])+lstm_weights['affine_bias']
-        embedding=z
+        # embedding=z
         return embedding,vae_loss
     def _vae_sample(self, weights, biases, x, lookup=False):
             #TODO: consider adding a linear transform layer+relu or softplus here first 
@@ -592,7 +599,7 @@ def train(learning_rate=0.001, continue_training=False):
     running_decay=1
     decay_rate=0.9999302192204246
     with tf.device('/gpu:0'):
-        caption_generator = Caption_Generator(dim_in, dim_hidden, dim_embed, batch_size, maxlen+2, n_words, init_b,n_input=n_input,n_lstm_input=n_lstm_input,n_z=n_z)
+        caption_generator = Caption_Generator(dim_in, dim_hidden, dim_embed, batch_size, maxlen+2, n_words, np.zeros(n_lstm_input).astype(np.float32),n_input=n_input,n_lstm_input=n_lstm_input,n_z=n_z)
 
         loss, image, sentence, mask = caption_generator.build_model()
 
@@ -637,16 +644,16 @@ def train(learning_rate=0.001, continue_training=False):
 
             print("Current Cost: ", loss_value, "\t Epoch {}/{}".format(epoch, n_epochs), "\t Iter {}/{}".format(start,len(feats)))
             losses.append(loss_value*running_decay)
-            # if epoch<9:
-            #     if i%3==0:
-            #         running_decay*=decay_rate
-            # else:
-            #     if i%8==0:
-            #         running_decay*=decay_rate
+            if epoch<9:
+                if i%3==0:
+                    running_decay*=decay_rate
+            else:
+                if i%8==0:
+                    running_decay*=decay_rate
             i+=1
             print losses[-1]
         print("Saving the model from epoch: ", epoch)
-        pkl.dump(losses,open('losses/loss.pkl','wb'))
+        pkl.dump(losses,open('losses/loss_e2e.pkl','wb'))
         saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
         learning_rate *= 0.95
 def test(sess,image,generated_words,ixtoword,idx=0): # Naive greedy search
@@ -671,7 +678,7 @@ def test(sess,image,generated_words,ixtoword,idx=0): # Naive greedy search
 
 if __name__=='__main__':
 
-    model_path = './models/tensorflow_e2e'
+    model_path = './models/tensorflow'
     feature_path = './data/feats.npy'
     annotation_path = './data/results_20130124.token'
     import sys

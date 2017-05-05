@@ -22,7 +22,7 @@ def map_lambda():
     return n+1
 def rev_map_lambda():
     return "<UNK>"
-def load_text(n,capts,num_samples=None):
+def load_text(n,capts=None,num_samples=None):
     # fname = 'Oxford_English_Dictionary.txt'
     # txt = []
     # with open(fname,'rb') as f:
@@ -72,7 +72,10 @@ def load_text(n,capts,num_samples=None):
     _map=pkl.load(open('maps.pkl','rb'))
     rev_map=pkl.load(open('rev_maps.pkl','rb'))
     if num_samples is not None:
-        num_samples=len(capts)
+        if capts is not None:
+            num_samples=len(capts)
+        else:
+            num_samples=len(word_list)
     # X = map_one_hot(word_list[:num_samples],_map,1,n)
     # y = (36665, 56210)
     # print _map
@@ -81,8 +84,12 @@ def load_text(n,capts,num_samples=None):
     # np.save('yc',y)
     # np.save('maskc',mask)
     X=np.load('Xs.npy','r')
-    y=np.load('yc.npy','r')
-    mask=np.load('maskc.npy','r')
+    if capts is not None:
+        y=np.load('yc.npy','r')
+        mask=np.load('maskc.npy','r')
+    else:
+        y=np.load('ys.npy','r')
+        mask=np.load('masks.npy','r')
     print (np.max(y))
     return X, y, mask,rev_map
 
@@ -401,7 +408,7 @@ class Caption_Generator():
         return img, all_words
     def _initialize_weights(self):
         all_weights = dict()
-        trainability=False
+        trainability=True
         if not same_embedding:
             all_weights['input_meaning'] = {
                 'affine_weight': tf.Variable(xavier_init(self.n_z, self.n_lstm_input),name='affine_weight',trainable=trainability),
@@ -589,6 +596,7 @@ def train(learning_rate=0.001, continue_training=False):
     n_words = len(wordtoix)
     maxlen = 30
     X, final_captions, mask, _map = load_text(2**19-3,captions)
+    X,y,aux_mask,_map
     running_decay=1
     decay_rate=0.9999302192204246
     with tf.device('/gpu:0'):
