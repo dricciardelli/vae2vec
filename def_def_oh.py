@@ -17,7 +17,6 @@ import itertools
 import ctc_loss
 
 import os
-import IPython
 n=2**19-4
 def map_lambda():
 	return n+2
@@ -79,10 +78,10 @@ def load_text(n,num_samples=None):
 	#                              stop_words = None,   \
 	#                              max_features = None, \
 	#                              token_pattern='\\b\\w+\\b') # Keep single character words
-
+	n=len(word_list)
 	_map,rev_map=get_one_hot_map(word_list,def_list,n)
-	# pkl.dump(_map,open('maps.pkl','wb'))
-	# pkl.dump(rev_map,open('rev_maps.pkl','wb'))
+	pkl.dump(_map,open('maps.pkl','wb'))
+	pkl.dump(rev_map,open('rev_maps.pkl','wb'))
 	# exit()
 	if num_samples is not None:
 		num_samples=len(word_list)
@@ -92,12 +91,12 @@ def load_text(n,num_samples=None):
 	# y = (36665, 56210)
 	# print _map
 	# y,mask = map_one_hot(def_list[:num_samples],_map,maxlen,n)
-	# np.save('Xs',X)
-	# np.save('ys',y)
-	# np.save('masks',mask)
-	X=np.load('Xs.npy','r')
-	y=np.load('ys.npy','r')
-	mask=np.load('masks.npy','r')
+	np.save('Xs',X)
+	np.save('ys',y)
+	np.save('masks',mask)
+	# X=np.load('Xs.npy','r')
+	# y=np.load('ys.npy','r')
+	# mask=np.load('masks.npy','r')
 	print (np.max(y))
 	return X, y, mask,rev_map
 
@@ -401,8 +400,8 @@ class VariationalAutoencoder(object):
 		print outs.shape
 		outs=tf.nn.dropout(outs,.75)
 		input_embedding,input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
-		input_embedding=tf.nn.l2_normalize(input_embedding,dim=-1)
-		self.other_loss=tf.constant(0,dtype=tf.float32)
+		# input_embedding=tf.nn.l2_normalize(input_embedding,dim=-1)
+		other_loss=tf.constant(0,dtype=tf.float32)
 		KLD_penalty=tf.tanh(tf.cast(self.timestep,tf.float32)/(800000/18.0))
 		cos_penalty=tf.maximum(-0.1,tf.tanh(tf.cast(self.timestep,tf.float32)/(800000.0/18.0)))
 
@@ -413,10 +412,10 @@ class VariationalAutoencoder(object):
 			normed_embedding= tf.nn.l2_normalize(input_embedding, dim=-1)
 			normed_target=tf.nn.l2_normalize(_x,dim=-1)
 			cos_sim=(tf.reduce_sum(tf.multiply(normed_embedding,normed_target),axis=-1))
-			# self.exp_loss=tf.reduce_mean((-cos_sim))
-			# self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
-			self.other_loss += tf.reduce_mean(1-(cos_sim))*cos_penalty
-			# self.other_loss+=tf.reduce_mean(tf.reduce_sum(tf.square(_x-input_embedding),axis=-1))*cos_penalty
+			# # self.exp_loss=tf.reduce_mean((-cos_sim))
+			# # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
+			other_loss += tf.reduce_mean(-(cos_sim))*cos_penalty
+			# other_loss+=tf.reduce_mean(tf.reduce_sum(tf.square(_x-input_embedding),axis=-1))*cos_penalty
 
 		# Use recognition network to determine mean and 
 		# (log) variance of Gaussian distribution in latent
@@ -473,8 +472,10 @@ class VariationalAutoencoder(object):
 							
 							# best_word=tf.round(best_word)
 							# all_the_f_one_h.append(best_word)
-							xentropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logit, labels=onehot)
-							xentropy=tf.reduce_sum(xentropy,reduction_indices=-1)
+							# xentropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logit, labels=onehot)
+							# xentropy=tf.reduce_sum(xentropy,reduction_indices=-1)
+							onehot=tf.cast(tf.round(tf.reduce_sum(onehot*tf.expand_dims((2** tf.range(0,self.network_architecture['n_input'],1)),axis=0),axis=-1)),tf.uint32)
+							xentropy=tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logit,labels=onehot)
 						else:
 							xentropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit, labels=onehot)
 
@@ -486,14 +487,14 @@ class VariationalAutoencoder(object):
 
 					else:
 						probs.append(tf.expand_dims(tf.nn.sigmoid(logit),1))
-			self.debug=[input_KLD_loss,tf.reduce_mean(input_embedding_KLD_loss)]
+			# self.debug=[input_KLD_loss,tf.reduce_mean(input_embedding_KLD_loss)]
 			# self.debug=[tf.reshape(self.debug[0],[self.batch_size,self.network_architecture['maxlen'],-1])[:,1,:],self.debug[2]]
 			# self.debug+=[_x,input_embedding, outs]
-			# self.debug+=[input_embedding, outs]
-			self.debug=[self.other_loss,cos_penalty]
+			self.debug+=[input_embedding, outs]
+			self.debug=[tf.constant(0)]
 			if not use_ctc:
 				loss_ctc=0
-				# self.debug=self.other_loss
+				# self.debug=other_loss
 				# self.debug=[input_KLD_loss,embedded_input_KLD_loss,input_embedding_KLD_loss]
 			else:
 				probs=tf.concat(probs,axis=1)
@@ -501,7 +502,7 @@ class VariationalAutoencoder(object):
 				loss_ctc=ctc_loss.loss(probs,self.caption_placeholder[:,1:,:],self.network_architecture['maxlen']-2,self.batch_size,seqlen-1)
 				self.debug=loss_ctc
 			# 
-			loss = (loss / tf.reduce_sum(self.mask[:,1:]))+tf.reduce_sum(input_embedding_KLD_loss)/self.batch_size*KLD_penalty+tf.reduce_sum(embedded_input_KLD_loss*self.mask[:,1:])/tf.reduce_sum(self.mask[:,1:])*KLD_penalty+loss_ctc+input_KLD_loss+self.other_loss
+			loss = (loss / tf.reduce_sum(self.mask[:,1:]))+tf.reduce_sum(input_embedding_KLD_loss)/self.batch_size*KLD_penalty+tf.reduce_sum(embedded_input_KLD_loss*self.mask[:,1:])/tf.reduce_sum(self.mask[:,1:])*KLD_penalty+loss_ctc+input_KLD_loss+other_loss
 
 			self.loss=loss
 	
@@ -582,8 +583,6 @@ class VariationalAutoencoder(object):
 		else:
 			self.debug.append(self.x)
 			x=tf.matmul(self.x,self.embw)+self.embb
-			if nl_emb:
-				x=tf.nn.relu(x)
 			self.debug.append(x)
 			z,vae_loss=self._vae_sample_mid(ve_weights[0],ve_weights[1],x)
 			self.debug.append(z)
@@ -608,10 +607,7 @@ class VariationalAutoencoder(object):
 
 	def _get_word_embedding(self, ve_weights, lstm_weights, x,logit=False):
 		if form3:
-
 			x=tf.matmul(x,self.embw)+self.embb
-			if nl_emb:
-				x=tf.nn.relu(x)
 			# self.debug.append(x)
 		if logit:
 			z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x)
@@ -686,7 +682,7 @@ class VariationalAutoencoder(object):
 		else:
 			self.optimizer = \
 				tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss)
-		self.emb_train_op=tf.train.RMSPropOptimizer(1e-3).minimize(self.other_loss)
+
 	def _create_loss_test(self):
 		self.test_op = \
 			tf.test.compute_gradient_error(self.x,np.array([self.batch_size,self.n_words]),self.loss,[1],extra_feed_dict={})
@@ -719,7 +715,6 @@ class VariationalAutoencoder(object):
 			input_embedding,_=self._get_input_embedding([network_weights['embmap'],network_weights['embmap_biases']],network_weights['embmap'])
 		else:
 			input_embedding,_=self._get_input_embedding([self.network_weights['variational_encoding'],self.network_weights['biases_variational_encoding']],self.network_weights['LSTM'])
-		input_embedding=tf.nn.l2_normalize(input_embedding,dim=-1)
 		print input_embedding.shape
 		# image_embedding = tf.matmul(img, self.img_embedding) + self.img_embedding_bias
 		state = self.lstm.zero_state(self.batch_size,dtype=tf.float32)
@@ -811,7 +806,7 @@ def bin_to_int(a):
 	
 
 def train(network_architecture, learning_rate=0.001,
-		  batch_size=100, training_epochs=10, display_step=10,gen=False,ctrain=False,test=False):
+		  batch_size=100, training_epochs=10, display_step=2,gen=False,ctrain=False,test=False):
 	global_step=tf.Variable(0,trainable=False)
 	if should_decay and not gen:
 		
@@ -820,28 +815,24 @@ def train(network_architecture, learning_rate=0.001,
 	vae = VariationalAutoencoder(network_architecture, 
 								 learning_rate=learning_rate, 
 								 batch_size=batch_size,generative=gen,ctrain=ctrain,test=test,global_step=global_step)
-
 	# Training cycle
 	# if test:
 	# 	maxlen=network_architecture['maxlen']
 	# 	return tf.test.compute_gradient_error([vae.x,vae.caption_placeholder,vae.mask],[np.array([batch_size,n_input]),np.array([batch_size,maxlen,n_input]),np.array([batch_size,maxlen])],vae.loss,[])
 	if gen:
 		return vae
-	emb_train_op=vae.emb_train_op
 	costs=[]
 	# indlist=np.arange(all_samps).astype(int)
-	tt=False
 	indlist=np.arange(10*batch_size).astype(int)
 	for epoch in range(training_epochs):
 		avg_cost = 0.
 		total_batch = int(n_samples / batch_size)
 		# Loop over all batches
 		
-		np.random.shuffle(indlist)
+		# np.random.shuffle(indlist)
 		testify=False
 		avg_loss=0
-
-		for i in range(10):
+		for i in range(1):
 		# for i in range(total_batch):
 			# break
 			ts=i
@@ -852,27 +843,22 @@ def train(network_architecture, learning_rate=0.001,
 			# Fit training using batch data
 			# if epoch==2 and i ==0:
 			# 	testify=True
-			cost,loss = vae.partial_fit(batch_xs,y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),mask[indlist[i*batch_size:(i+1)*batch_size]],timestep=epoch*10+ts,testify=testify)
+			cost,loss = vae.partial_fit(batch_xs,y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),mask[indlist[i*batch_size:(i+1)*batch_size]],timestep=epoch+ts,testify=testify)
 
 			# Compute average loss
 			avg_cost = avg_cost * i /(i+1) +cost/(i+1)
 			# avg_loss=avg_loss*i/(i+1)+loss/(i+1)
 			if i% display_step==0:
-				print avg_cost,loss,i
-				# _,l=vae.sess.run([emb_train_op,vae.other_loss],feed_dict={vae.x:batch_xs,vae.caption_placeholder:y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),vae.mask:mask[indlist[i*batch_size:(i+1)*batch_size]],vae.timestep:epoch*10+ts})
-				# print l
+				print avg_cost,loss,np.tanh((epoch*total_batch+i)/(800000.0/18))-.2
 			if epoch == 0 and ts==0:
 				costs.append(avg_cost)
-			if avg_cost<2.3:
-				
-				tt=True
+			
 
 		
 		costs.append(avg_cost)
-		# if tt:
-		# 	IPython.embed()
+		
 		# Display logs per epoch step
-		if epoch % (display_step*2) == 0:# or epoch==1:
+		if epoch % (display_step*100) == 0:# or epoch==1:
 			if should_save:
 				print 'saving'
 				vae.saver.save(vae.sess, os.path.join(model_path,'model'))
@@ -903,11 +889,10 @@ if __name__ == "__main__":
 	if sys.argv[3]!='clip':
 		clip_grad=False
 	should_save=True
-	nl_emb=False
 	should_train=True
-	should_continue=False
-	# should_continue=True
 	# should_train=not should_train
+	# should_continue=True
+	should_continue=False
 	should_decay=True
 	zero_end_tok=True
 	training_epochs=int(sys.argv[13])
@@ -952,7 +937,7 @@ if __name__ == "__main__":
 	if sys.argv[16]!='forward':
 		use_bdlstm=True
 		bdlstmtype='bdlstm'
-	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%s%sdefdefsingle%s.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(losstype),str(cliptype),str(vartype),str(transfertype))
+	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%s%sdefdef%s4.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(losstype),str(cliptype),str(vartype),str(transfertype))
 	all_samps=len(X)
 	n_samples=all_samps
 	# X, y = X[:n_samples, :], y[:n_samples, :]

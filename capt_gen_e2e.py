@@ -354,16 +354,19 @@ class Caption_Generator():
         encoded_output=tf.matmul(rnn_output,self.word_encoding)+self.word_encoding_bias
         #get loss
 
-        normed_embedding= tf.nn.l2_normalize(encoded_output, dim=-1)
-        normed_target=tf.nn.l2_normalize(embedded_input,dim=-1)
-        cos_sim=tf.multiply(normed_embedding,normed_target)[:,1:]
-        cos_sim=(tf.reduce_sum(cos_sim,axis=-1))
-        cos_sim=tf.reshape(cos_sim,[self.batch_size,-1])
-        cos_sim=tf.reduce_sum(cos_sim[:,1:]*mask[:,1:])
-        cos_sim=cos_sim/tf.reduce_sum(mask[:,1:])
-        self.exp_loss=tf.reduce_sum((-cos_sim))
-        # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
-        total_loss = tf.reduce_sum(-(cos_sim))
+        # normed_embedding= tf.nn.l2_normalize(encoded_output, dim=-1)
+        # normed_target=tf.nn.l2_normalize(embedded_input,dim=-1)
+        # cos_sim=tf.multiply(normed_embedding,normed_target)[:,1:]
+        # cos_sim=(tf.reduce_sum(cos_sim,axis=-1))
+        # cos_sim=tf.reshape(cos_sim,[self.batch_size,-1])
+        # cos_sim=tf.reduce_sum(cos_sim[:,1:]*mask[:,1:])
+        # cos_sim=cos_sim/tf.reduce_sum(mask[:,1:])
+        # self.exp_loss=tf.reduce_sum((-cos_sim))
+        # # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
+        # total_loss = tf.reduce_sum(-(cos_sim))
+        mse=tf.reduce_sum(tf.square(encoded_output-embedded_input),axis=-1)[:,1:]*mask[:,1:]
+        mse=tf.reduce_sum(mse)/tf.reduce_sum(mask[:,1:])
+
         #average over timeseries length
 
         # total_loss=tf.reduce_sum(masked_xentropy)/tf.reduce_sum(mask[:,1:])
