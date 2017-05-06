@@ -401,7 +401,7 @@ class VariationalAutoencoder(object):
 			cos_sim=(tf.reduce_sum(tf.multiply(normed_embedding,normed_target),axis=-1))
 			# # self.exp_loss=tf.reduce_mean((-cos_sim))
 			# # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
-			other_loss += tf.reduce_mean(-(cos_sim))*cos_penalty
+			other_loss += tf.reduce_mean(1-(cos_sim))*cos_penalty
 			# other_loss+=tf.reduce_mean(tf.reduce_sum(tf.square(_x-input_embedding),axis=-1))*cos_penalty
 
 		# Use recognition network to determine mean and 

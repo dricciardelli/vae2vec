@@ -404,7 +404,7 @@ class VariationalAutoencoder(object):
 		input_embedding=tf.nn.l2_normalize(input_embedding,dim=-1)
 		self.other_loss=tf.constant(0,dtype=tf.float32)
 		KLD_penalty=tf.tanh(tf.cast(self.timestep,tf.float32)/(800000/18.0))
-		cos_penalty=tf.maximum(-0.1,tf.tanh(tf.cast(self.timestep,tf.float32)/(800000.0/18.0)))
+		cos_penalty=tf.maximum(-0.1,tf.tanh(tf.cast(self.timestep,tf.float32)/(18.0)))
 
 		input_KLD_loss=0
 		if form3:
@@ -813,10 +813,11 @@ def bin_to_int(a):
 def train(network_architecture, learning_rate=0.001,
 		  batch_size=100, training_epochs=10, display_step=10,gen=False,ctrain=False,test=False):
 	global_step=tf.Variable(0,trainable=False)
+	total_batch = int(n_samples / batch_size)
 	if should_decay and not gen:
 		
 		learning_rate = tf.train.exponential_decay(learning_rate, global_step,
-                                           all_samps, 0.95, staircase=True)
+                                           total_batch, 0.95, staircase=True)
 	vae = VariationalAutoencoder(network_architecture, 
 								 learning_rate=learning_rate, 
 								 batch_size=batch_size,generative=gen,ctrain=ctrain,test=test,global_step=global_step)
@@ -829,20 +830,20 @@ def train(network_architecture, learning_rate=0.001,
 		return vae
 	emb_train_op=vae.emb_train_op
 	costs=[]
-	# indlist=np.arange(all_samps).astype(int)
+	indlist=np.arange(all_samps).astype(int)
 	tt=False
-	indlist=np.arange(10*batch_size).astype(int)
+	# indlist=np.arange(10*batch_size).astype(int)
 	for epoch in range(training_epochs):
 		avg_cost = 0.
-		total_batch = int(n_samples / batch_size)
+		
 		# Loop over all batches
 		
 		np.random.shuffle(indlist)
 		testify=False
 		avg_loss=0
 
-		for i in range(10):
-		# for i in range(total_batch):
+		# for i in range(10):
+		for i in range(total_batch):
 			# break
 			ts=i
 			# i=0
@@ -852,7 +853,7 @@ def train(network_architecture, learning_rate=0.001,
 			# Fit training using batch data
 			# if epoch==2 and i ==0:
 			# 	testify=True
-			cost,loss = vae.partial_fit(batch_xs,y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),mask[indlist[i*batch_size:(i+1)*batch_size]],timestep=epoch*10+ts,testify=testify)
+			cost,loss = vae.partial_fit(batch_xs,y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),mask[indlist[i*batch_size:(i+1)*batch_size]],timestep=epoch+1e-3,testify=testify)
 
 			# Compute average loss
 			avg_cost = avg_cost * i /(i+1) +cost/(i+1)
