@@ -348,52 +348,52 @@ class VariationalAutoencoder(object):
 		seqlen=tf.cast(tf.reduce_sum(self.mask,reduction_indices=-1),tf.int32)
 		self.embedded_input_KLD_loss=tf.constant(0.0)
 		self.input_embedding_KLD_loss=tf.constant(0.0)
-		# def train_encoder():
-		embedded_input,self.embedded_input_KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'],tf.reshape(self.caption_placeholder,[-1,self.network_architecture['n_input']]),logit=True)
-		embedded_input=tf.reshape(embedded_input,[-1,self.network_architecture['maxlen'],self.network_architecture['n_lstm_input']])
-		if not vanilla:
-			self.embedded_input_KLD_loss=tf.reshape(embedded_input_KLD_loss,[-1,self.network_architecture['maxlen']])[:,1:]
-		encoder_input=embedded_input[:,1:,:]
-		cell=tf.contrib.rnn.BasicLSTMCell(self.network_architecture['n_lstm_input'])
-		if lstm_stack>1:
-			cell=tf.contrib.rnn.MultiRNNCell([cell]*lstm_stack)
-		if not use_bdlstm:
-			encoder_outs,encoder_states=rnn.dynamic_rnn(cell,encoder_input,sequence_length=seqlen-1,dtype=tf.float32,time_major=False)
-		else:
-			backward_cell=tf.contrib.rnn.BasicLSTMCell(self.network_architecture['n_lstm_input'])
+		def train_encoder():
+			embedded_input,self.embedded_input_KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'],tf.reshape(self.caption_placeholder,[-1,self.network_architecture['n_input']]),logit=True)
+			embedded_input=tf.reshape(embedded_input,[-1,self.network_architecture['maxlen'],self.network_architecture['n_lstm_input']])
+			if not vanilla:
+				self.embedded_input_KLD_loss=tf.reshape(embedded_input_KLD_loss,[-1,self.network_architecture['maxlen']])[:,1:]
+			encoder_input=embedded_input[:,1:,:]
+			cell=tf.contrib.rnn.BasicLSTMCell(self.network_architecture['n_lstm_input'])
 			if lstm_stack>1:
-				backward_cell=tf.contrib.rnn.MultiRNNCell([backward_cell]*lstm_stack)
-			encoder_outs,encoder_states=rnn.bidirectional_dynamic_rnn(cell,backward_cell,encoder_input,sequence_length=seqlen-1,dtype=tf.float32,time_major=False)
-		ix_range=tf.range(0,self.batch_size,1)
-		ixs=tf.expand_dims(ix_range,-1)
-		to_cat=tf.expand_dims(seqlen-2,-1)
-		gather_inds=tf.concat([ixs,to_cat],axis=-1)
-		print encoder_outs
-		outs=tf.gather_nd(encoder_outs,gather_inds)
-		outs=tf.nn.dropout(outs,.75)
-		self.deb=tf.gather_nd(self.caption_placeholder[:,1:,:],gather_inds)
-		print outs.shape
-		input_embedding,self.input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
-			# return input_embedding
+				cell=tf.contrib.rnn.MultiRNNCell([cell]*lstm_stack)
+			if not use_bdlstm:
+				encoder_outs,encoder_states=rnn.dynamic_rnn(cell,encoder_input,sequence_length=seqlen-1,dtype=tf.float32,time_major=False)
+			else:
+				backward_cell=tf.contrib.rnn.BasicLSTMCell(self.network_architecture['n_lstm_input'])
+				if lstm_stack>1:
+					backward_cell=tf.contrib.rnn.MultiRNNCell([backward_cell]*lstm_stack)
+				encoder_outs,encoder_states=rnn.bidirectional_dynamic_rnn(cell,backward_cell,encoder_input,sequence_length=seqlen-1,dtype=tf.float32,time_major=False)
+			ix_range=tf.range(0,self.batch_size,1)
+			ixs=tf.expand_dims(ix_range,-1)
+			to_cat=tf.expand_dims(seqlen-2,-1)
+			gather_inds=tf.concat([ixs,to_cat],axis=-1)
+			print encoder_outs
+			outs=tf.gather_nd(encoder_outs,gather_inds)
+			outs=tf.nn.dropout(outs,.75)
+			self.deb=tf.gather_nd(self.caption_placeholder[:,1:,:],gather_inds)
+			print outs.shape
+			input_embedding,self.input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
+			return input_embedding
 		# input_embedding=tf.nn.l2_normalize(input_embedding,dim=-1)
 		self.other_loss=tf.constant(0,dtype=tf.float32)
 		KLD_penalty=tf.tanh(tf.cast(self.timestep,tf.float32)/1.0)
 		cos_penalty=tf.maximum(-0.1,tf.tanh(tf.cast(self.timestep,tf.float32)/(5.0)))
 
 		self.input_KLD_loss=tf.constant(0.0)
-		# def train_decoder():
-		if form3:
-			_x,self.input_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['variational_encoding'])
-			self.input_KLD_loss=tf.reduce_mean(self.input_KLD_loss)*KLD_penalty#*tf.constant(0.0,dtype=tf.float32)
-			normed_embedding= tf.nn.l2_normalize(self.mid_var, dim=-1)
-			normed_target=tf.nn.l2_normalize(self.word_var,dim=-1)
-			cos_sim=(tf.reduce_sum(tf.multiply(normed_embedding,normed_target),axis=-1))
-			# # self.exp_loss=tf.reduce_mean((-cos_sim))
-			# # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
-			self.other_loss += tf.reduce_mean(-(cos_sim))*cos_penalty
-			# other_loss+=tf.reduce_mean(tf.reduce_sum(tf.square(_x-input_embedding),axis=-1))*cos_penalty
-		return _x
-		# input_embedding=tf.cond(tf.equal(self.timestep%5,0),train_decoder,train_encoder)
+		def train_decoder():
+			if form3:
+				_x,self.input_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['variational_encoding'])
+				self.input_KLD_loss=tf.reduce_mean(self.input_KLD_loss)*KLD_penalty#*tf.constant(0.0,dtype=tf.float32)
+				normed_embedding= tf.nn.l2_normalize(self.mid_var, dim=-1)
+				normed_target=tf.nn.l2_normalize(self.word_var,dim=-1)
+				cos_sim=(tf.reduce_sum(tf.multiply(normed_embedding,normed_target),axis=-1))
+				# # self.exp_loss=tf.reduce_mean((-cos_sim))
+				# # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
+				self.other_loss += tf.reduce_mean(-(cos_sim))*cos_penalty
+				# other_loss+=tf.reduce_mean(tf.reduce_sum(tf.square(_x-input_embedding),axis=-1))*cos_penalty
+			return _x
+		input_embedding=tf.cond(tf.equal(self.timestep%5,0),train_decoder,train_encoder)
 		# Use recognition network to determine mean and 
 		# (log) variance of Gaussian distribution in latent
 		# space
@@ -497,7 +497,6 @@ class VariationalAutoencoder(object):
 		# 		'out_mean': tf.Variable(xavier_init(n_in, n_z),name='out_mean',trainable=embeddings_trainable),
 		# 		'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='in_affine_weight'),
 		# 		'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='in_affine_bias')}
-			
 			
 		self.untrainable_variables=all_weights['input_meaning'].values()+all_weights['biases_variational_encoding'].values()+all_weights['variational_encoding'].values()
 		if mid_vae:
