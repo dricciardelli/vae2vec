@@ -80,9 +80,10 @@ class DC(object):
                 self.W = tf.Variable(
                     tf.random_uniform([emb_dim_in, embedding_size], -1.0, 1.0),
                     name="W")
-                self.embedded_chars = tf.matmul(self.W,self.input_x)
+                self.embedded_chars = tf.matmul(tf.reshape(self.input_x,[-1,emb_dim_in]),self.W)
                 self.b=tf.Variable(tf.zeros([embedding_size]),dtype=tf.float32)
                 self.embedded_chars+=self.b
+                self.embedded_chars=tf.reshape(self.embedded_chars.[-1,sequence_length,embedding_size])
                 self.embedded_chars_expanded = tf.expand_dims(self.embedded_chars, -1)
 
             # Create a convolution + maxpool layer for each filter size
@@ -142,3 +143,37 @@ class DC(object):
         d_optimizer = tf.train.AdamOptimizer(1e-4)
         grads_and_vars = d_optimizer.compute_gradients(self.loss, self.params, aggregation_method=2)
         self.train_op = d_optimizer.apply_gradients(grads_and_vars)
+
+class DLSTM(object):
+    def __init__(self,sequence_length,num_classes,hidden_dim,middle_dim,bidir=False):
+        self.input_x = tf.placeholder(tf.int32, [None, sequence_length,emb_dim_in], name="input_x")
+        self.input_y = tf.placeholder(tf.float32, [None, num_classes], name="input_y")
+        self.dropout_keep_prob = tf.placeholder(tf.float32, name="dropout_keep_prob")
+        self.forward_cell=tf.contrib.rnn.BasicLSTMCell(hidden_dim)
+        if bidir:
+            self.backward_cell=tf.contrib.rnn.BasicLSTMCell(hidden_dim)
+        self.bidir=bidir
+        self.num_classes=num_classes
+        self.hidden_dim=hidden_dim
+        self.sequence_length=sequence_length
+        self.middle_dim=middle_dim
+        self._build_network()
+    def _build_network(self):
+        if self.bidir:
+            outs,_,_=tf.contrib.rnn.static_bidirectional_rnn(self.forward_cell,self.backward_cell,self.input_x)
+            self.W=tf.Variable(tf.random_normal([2*self.hidden_dim*self.sequence_length,self.middle_dim]))
+            outs=tf.reshape(outs,[-1,self.sequence_length*2*self.hidden_dim])
+        else:
+            outs,states=tf.contrib.rnn.static_rnn(self.forward_cell,self.input_x)
+            self.W=tf.Variable(tf.random_normal([self.hidden_dim*self.sequence_length,self.middle_dim]))
+            outs=tf.reshape(outs,[-1,self.sequence_length*self.hidden_dim])
+
+        self.b=tf.Variable(tf.zeros[self.middle_dim])
+        middle=tf.matmul(outs,self.W)+self.b
+        middle=tf.nn.dropout(self.dropout_keep_prob)
+        self.W2=tf.Variable(tf.random_normal([self.middle_dim,self.num_classes]))
+        self.b2=tf.Variable(tf.zeros([self.num_classes]))
+        out=tf.matmul(middle,self.W2)+self.b2
+        self.loss=tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=out,labels=self.input_y))
+        self.train_op=tf.train.RMSPropOptimizer(1e-4).minimize(self.loss)
+
