@@ -17,7 +17,7 @@ import itertools
 import ctc_loss
 
 import os
-n=2**19-3
+n=150000-2
 def map_lambda():
 	return n+1
 def rev_map_lambda():
@@ -80,8 +80,8 @@ def load_text(n,num_samples=None):
 	#                              token_pattern='\\b\\w+\\b') # Keep single character words
 
 	_map,rev_map=get_one_hot_map(word_list,def_list,n)
-	pkl.dump(_map,open('mapa.pkl','wb'))
-	pkl.dump(rev_map,open('rev_mapa.pkl','wb'))
+	pkl.dump(_map,open('mapaoh.pkl','wb'))
+	pkl.dump(rev_map,open('rev_mapaoh.pkl','wb'))
 	# exit()
 	if num_samples is not None:
 		num_samples=len(word_list)
@@ -91,12 +91,12 @@ def load_text(n,num_samples=None):
 	# # y = (36665, 56210)
 	# # print _map
 	# y,mask = map_one_hot(def_list[:num_samples],_map,maxlen,n)
-	# np.save('Xa',X)
-	# np.save('ya',y)
-	# np.save('maska',mask)
-	X=np.load('Xa.npy','r')
-	y=np.load('ya.npy','r')
-	mask=np.load('maska.npy','r')
+	np.save('Xaoh',X)
+	np.save('yaoh',y)
+	np.save('maskaoh',mask)
+	# X=np.load('Xa.npy','r')
+	# y=np.load('ya.npy','r')
+	# mask=np.load('maska.npy','r')
 	print (np.max(y))
 	return X, y, mask,rev_map
 
@@ -871,9 +871,9 @@ if __name__ == "__main__":
 	binary_dim=int(sys.argv[6])
 	all_the_f_one_h=[]
 	if not zero_end_tok:
-		X, y, mask, _map = load_text(2**binary_dim-4)
+		X, y, mask, _map = load_text(150000-3)
 	else:
-		X, y, mask, _map = load_text(150000)
+		X, y, mask, _map = load_text(150000-2)
 	n_input =150000
 	n_samples = 30000
 	lstm_dim=int(sys.argv[7])
