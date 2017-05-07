@@ -87,10 +87,10 @@ def load_text(n,num_samples=None):
 		num_samples=len(word_list)
 	# X = (36665, 56210)
 
-	# X = map_one_hot(word_list[:num_samples],_map,1,n)
+	X = map_one_hot(word_list[:num_samples],_map,1,n)
 	# # y = (36665, 56210)
 	# # print _map
-	# y,mask = map_one_hot(def_list[:num_samples],_map,maxlen,n)
+	y,mask = map_one_hot(def_list[:num_samples],_map,maxlen,n)
 	np.save('Xaoh',X)
 	np.save('yaoh',y)
 	np.save('maskaoh',mask)
