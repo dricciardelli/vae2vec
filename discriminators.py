@@ -57,7 +57,7 @@ class DC(object):
         if emb_dim_in is None:
             self.input_x = tf.placeholder(tf.int32, [None, sequence_length], name="input_x")
         else:
-            self.input_x = tf.placeholder(tf.int32, [None, sequence_length,emb_dim_in], name="input_x")
+            self.input_x = tf.placeholder(tf.float32, [None, sequence_length,emb_dim_in], name="input_x")
         self.input_y = tf.placeholder(tf.float32, [None, num_classes], name="input_y")
         self.dropout_keep_prob = tf.placeholder(tf.float32, name="dropout_keep_prob")
 
@@ -145,10 +145,12 @@ class DC(object):
         self.train_op = d_optimizer.apply_gradients(grads_and_vars)
 
 class DLSTM(object):
-    def __init__(self,sequence_length,num_classes,hidden_dim,middle_dim,bidir=False):
-        self.input_x = tf.placeholder(tf.int32, [None, sequence_length,emb_dim_in], name="input_x")
+    def __init__(self,sequence_length,num_classes,hidden_dim,middle_dim,emb_dim_in,bidir=False,):
+        self.input_x = tf.placeholder(tf.float32, [None, sequence_length], name="input_x")
         self.input_y = tf.placeholder(tf.float32, [None, num_classes], name="input_y")
         self.dropout_keep_prob = tf.placeholder(tf.float32, name="dropout_keep_prob")
+        
+        self.vl=[self.W,self.b,self.W2,self.b2]
         self.forward_cell=tf.contrib.rnn.BasicLSTMCell(hidden_dim)
         if bidir:
             self.backward_cell=tf.contrib.rnn.BasicLSTMCell(hidden_dim)
@@ -157,23 +159,66 @@ class DLSTM(object):
         self.hidden_dim=hidden_dim
         self.sequence_length=sequence_length
         self.middle_dim=middle_dim
+        self.emb_dim_in=embed_dim_in
         self._build_network()
     def _build_network(self):
+        trainability=False
+        with tf.device('/cpu:0'):
+            om=tf.Variable(xavier_init(self.n_z, self.n_z),name='out_mean',trainable=trainability)
+        if not vanilla:
+            all_weights['biases_variational_encoding'] = {
+                'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability),
+                'out_log_sigma': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_log_sigmab',trainable=trainability)}
+            all_weights['variational_encoding'] = {
+                'out_mean': om,
+                'out_log_sigma': tf.Variable(xavier_init(self.n_input, self.n_z),name='out_log_sigma',trainable=trainability)}
+            
+        else:
+            all_weights['biases_variational_encoding'] = {
+                'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability)}
+            all_weights['variational_encoding'] = {
+                'out_mean': om}
+        embedded_input,KLD_loss=self._get_word_embedding([all_weights['variational_encoding'],all_weights['biases_variational_encoding']],None,tf.reshape(self.input_x,[-1]),logit=True)
+        embedded_input=tf.reshape(embedded_input,[-1,self.sequence_length,self.emb_dim_in])
         if self.bidir:
-            outs,_,_=tf.contrib.rnn.static_bidirectional_rnn(self.forward_cell,self.backward_cell,self.input_x)
-            self.W=tf.Variable(tf.random_normal([2*self.hidden_dim*self.sequence_length,self.middle_dim]))
+            outs,_,_=tf.contrib.rnn.static_bidirectional_rnn(self.forward_cell,self.backward_cell,embedded_input)
             outs=tf.reshape(outs,[-1,self.sequence_length*2*self.hidden_dim])
         else:
-            outs,states=tf.contrib.rnn.static_rnn(self.forward_cell,self.input_x)
-            self.W=tf.Variable(tf.random_normal([self.hidden_dim*self.sequence_length,self.middle_dim]))
+            outs,states=tf.contrib.rnn.static_rnn(self.forward_cell,embedded_input)
+            
             outs=tf.reshape(outs,[-1,self.sequence_length*self.hidden_dim])
 
-        self.b=tf.Variable(tf.zeros[self.middle_dim])
+        if not self.bidir:
+            self.W=tf.Variable(tf.random_normal([self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm')
+        else:
+            self.W=tf.Variable(tf.random_normal([2*self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm')
+
+        self.b=tf.Variable(tf.zeros[self.middle_dim],name='dlstmb')
+        self.W2=tf.Variable(tf.random_normal([self.middle_dim,self.num_classes]),name='dlstm2')
+        self.b2=tf.Variable(tf.zeros([self.num_classes]),name='dlstm2b')
         middle=tf.matmul(outs,self.W)+self.b
         middle=tf.nn.dropout(self.dropout_keep_prob)
-        self.W2=tf.Variable(tf.random_normal([self.middle_dim,self.num_classes]))
-        self.b2=tf.Variable(tf.zeros([self.num_classes]))
+        
         out=tf.matmul(middle,self.W2)+self.b2
-        self.loss=tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=out,labels=self.input_y))
-        self.train_op=tf.train.RMSPropOptimizer(1e-4).minimize(self.loss)
+        self.D1=tf.sigmoid(out)
+    def discriminate(self,input_x,train=True):
+        if self.bidir:
+            outs,_,_=tf.contrib.rnn.static_bidirectional_rnn(self.forward_cell,self.backward_cell,input_x)
+            outs=tf.reshape(outs,[-1,self.sequence_length*2*self.hidden_dim])
+        else:
+            outs,states=tf.contrib.rnn.static_rnn(self.forward_cell,input_x)
+            outs=tf.reshape(outs,[-1,self.sequence_length*self.hidden_dim])
+        if not self.bidir:
+            self.W=tf.Variable(tf.random_normal([self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm',trainable=train)
+        else:
+            self.W=tf.Variable(tf.random_normal([2*self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm',trainable=train)
 
+        self.b=tf.Variable(tf.zeros[self.middle_dim],name='dlstmb',trainable=train)
+        self.W2=tf.Variable(tf.random_normal([self.middle_dim,self.num_classes]),name='dlstm2',trainable=train)
+        self.b2=tf.Variable(tf.zeros([self.num_classes]),name='dlstm2b',trainable=train)
+        middle=tf.matmul(outs,self.W)+self.b
+        middle=tf.nn.dropout(self.dropout_keep_prob)
+        out=tf.matmul(middle,self.W2)+self.b2
+        return tf.sigmoid(out)
+        # return loss=tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=out,labels=input_y))
+    

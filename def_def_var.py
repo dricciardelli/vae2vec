@@ -79,9 +79,11 @@ def load_text(n,num_samples=None):
 	#                              max_features = None, \
 	#                              token_pattern='\\b\\w+\\b') # Keep single character words
 
-	_map,rev_map=get_one_hot_map(word_list,def_list,n)
-	pkl.dump(_map,open('mapa.pkl','wb'))
-	pkl.dump(rev_map,open('rev_mapa.pkl','wb'))
+	# _map,rev_map=get_one_hot_map(word_list,def_list,n)
+	# pkl.dump(_map,open('mapa.pkl','wb'))
+	# pkl.dump(rev_map,open('rev_mapa.pkl','wb'))
+	_map=pkl.load(open('mapa.pkl','rb'))
+	rev_map=pkl.load(open('rev_mapa.pkl','rb'))
 	# exit()
 	if num_samples is not None:
 		num_samples=len(word_list)
@@ -242,9 +244,15 @@ def map_one_hot(corpus,_map,maxlen,n):
 		totes=0
 		nopes=0
 		wtf=0
+		if form2:
+			binrep=(1&(1/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
+			rtn[:,:,:]=binrep
+		else:
+			rtn[:,:]=1
 		for l,_line in enumerate(corpus):
 			x=0
 			line=_line.split()
+			
 			for i in range(min(len(line),maxlen)):
 				# if line[i] not in _map:
 				# 	nopes+=1
@@ -260,9 +268,9 @@ def map_one_hot(corpus,_map,maxlen,n):
 				mask[l,i+1]=1.0
 				totes+=1
 				x=i+1
-			to_app=n+2
+			to_app=n+3
 			if zero_end_tok:
-				to_app=0
+				to_app=1
 			if form2:
 				rtn[l,x+1,:]=(1&(to_app/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
 			else:
@@ -271,6 +279,7 @@ def map_one_hot(corpus,_map,maxlen,n):
 
 		print (nopes,totes,wtf)
 		return rtn,mask
+
 
 
 def xavier_init(fan_in, fan_out, constant=1e-4): 
@@ -389,8 +398,8 @@ class VariationalAutoencoder(object):
 		input_embedding,input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
 		# input_embedding=tf.nn.l2_normalize(input_embedding,dim=-1)
 		other_loss=tf.constant(0,dtype=tf.float32)
-		KLD_penalty=tf.tanh(tf.cast(self.timestep,tf.float32)/1.0)
-		cos_penalty=tf.maximum(-0.1,tf.tanh(tf.cast(self.timestep,tf.float32)/(5.0)))
+		KLD_penalty=(tf.cast(self.timestep,tf.float32)/1.0)*1e-3
+		cos_penalty=tf.maximum(-0.1,(tf.cast(self.timestep,tf.float32)/(5.0)))*1e-3
 
 		input_KLD_loss=0
 		if form3:
@@ -498,6 +507,7 @@ class VariationalAutoencoder(object):
 				'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='affine_weight',trainable=embeddings_trainable),
 				'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='affine_bias',trainable=embeddings_trainable)}
 		if not vanilla:
+			print 'entered non vanilla'
 			all_weights['biases_variational_encoding'] = {
 				'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb',trainable=embeddings_trainable),
 				'out_log_sigma': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_log_sigmab',trainable=embeddings_trainable)}
@@ -577,6 +587,7 @@ class VariationalAutoencoder(object):
 				z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],tf.one_hot(x,depth=self.network_architecture['n_input']))
 				all_the_f_one_h.append(tf.one_hot(x,depth=self.network_architecture['n_input']))
 		print z.shape
+		z=tf.nn.l2_normalize(z,dim=-1)
 		self.mid_var=z
 		embedding=tf.matmul(z,lstm_weights['affine_weight'])+lstm_weights['affine_bias']
 		return embedding,vae_loss
@@ -822,7 +833,7 @@ def train(network_architecture, learning_rate=0.001,
 			# if epoch==2 and i ==0:
 			# 	testify=True
 			# cost,loss = vae.partial_fit(batch_xs,y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),mask[indlist[i*batch_size:(i+1)*batch_size]],timestep=epoch*total_batch+ts,testify=testify)
-			cost,loss = vae.partial_fit(batch_xs,y[inds].astype(np.uint32),mask[inds],timestep=(epoch)+1e-3,testify=testify)
+			cost,loss = vae.partial_fit(batch_xs,y[inds].astype(np.uint32),mask[inds],timestep=(epoch)+1,testify=testify)
 
 			# Compute average loss
 			avg_cost = avg_cost * i /(i+1) +cost/(i+1)
@@ -858,7 +869,7 @@ if __name__ == "__main__":
 	mid_vae=False
 	form3=	True
 	form4=False
-	vanilla=True
+	# vanilla=True
 
 	if sys.argv[2]=='mid_vae':
 		mid_vae=True

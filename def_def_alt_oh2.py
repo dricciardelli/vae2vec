@@ -303,6 +303,7 @@ class VariationalAutoencoder(object):
 		self.timestep=tf.placeholder(tf.float32,[],name='timestep')
 		# Create autoencoder network
 		to_restore=None
+		self.labels=tf.placeholder(tf.int32,[None],name='labels_placeholder')
 		with tf.device('/cpu:0'):
 			self.embw=tf.Variable(xavier_init(network_architecture['n_input'],network_architecture['n_z']),name='embw')
 		self.embb=tf.Variable(tf.zeros([network_architecture['n_z']]),name='embb')
@@ -381,8 +382,9 @@ class VariationalAutoencoder(object):
 			return [input_embedding,tf.constant(0.0),embedded_input_KLD_loss,input_embedding_KLD_loss]
 		# input_embedding=tf.nn.l2_normalize(input_embedding,dim=-1)
 		self.other_loss=tf.constant(0,dtype=tf.float32)
-		KLD_penalty=tf.tanh(tf.cast(self.timestep,tf.float32)/1.0)
-		cos_penalty=tf.maximum(-0.1,tf.tanh(tf.cast(self.timestep,tf.float32)/(5.0)))
+		KLD_penalty=(tf.cast(self.timestep,tf.float32)/1.0)
+		KLD_penalty=1e-3
+		cos_penalty=tf.maximum(-0.1,(tf.cast(self.timestep,tf.float32)/(5.0)))
 
 		
 		def train_decoder():
@@ -465,8 +467,16 @@ class VariationalAutoencoder(object):
 				# self.debug=[input_KLD_loss,embedded_input_KLD_loss,input_embedding_KLD_loss]
 			else:
 				probs=tf.concat(probs,axis=1)
-				probs=ctc_loss.get_output_probabilities(probs,self.caption_placeholder[:,1:,:])
-				loss_ctc=ctc_loss.loss(probs,self.caption_placeholder[:,1:,:],self.network_architecture['maxlen']-2,self.batch_size,seqlen-1)
+				# probs=ctc_loss.get_output_probabilities(probs,self.caption_placeholder[:,1:,:])
+				# loss_ctc=ctc_loss.loss(probs,self.caption_placeholder[:,1:,:],self.network_architecture['maxlen']-2,self.batch_size,seqlen-1)
+				indices=[]
+				for i in range(self.batch_size):
+					ixs=tf.expand_dims(tf.range(0,seqlen[i]-1,1),-1)
+					batch_ind=tf.ones([seqlen[i]-1,1],dtype=tf.int32)*i
+					indices.append(tf.concat([batch_ind,ixs],axis=-1))
+				indices=tf.cast(tf.concat(indices,axis=0),dtype=tf.int64)
+				targets=tf.SparseTensor(indices,self.labels,tf.constant([self.batch_size,self.network_architecture['maxlen']-2],dtype=tf.int64))
+				loss_ctc=tf.reduce_mean(tf.nn.ctc_loss(targets,probs,sequence_length=tf.cast(seqlen-1,tf.int32),ctc_merge_repeated=False,time_major=False))
 				self.debug=loss_ctc
 			# 
 			loss = (loss / tf.reduce_sum(self.mask[:,1:]))+tf.reduce_sum(self.input_embedding_KLD_loss)/self.batch_size*KLD_penalty+tf.reduce_sum(self.embedded_input_KLD_loss*self.mask[:,1:])/tf.reduce_sum(self.mask[:,1:])*KLD_penalty+loss_ctc+self.input_KLD_loss+self.other_loss
@@ -477,7 +487,7 @@ class VariationalAutoencoder(object):
 							n_input, n_z, n_z_m,n_z_m_2):
 		all_weights = dict()
 		if form3:
-			n_in=n_z
+			n_in=n_input
 		else:
 			n_in=n_input
 		if not same_embedding:
@@ -488,12 +498,16 @@ class VariationalAutoencoder(object):
 		all_weights['biases_variational_encoding'] = {
 			'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb',trainable=embeddings_trainable),
 			'out_log_sigma': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_log_sigmab',trainable=embeddings_trainable)}
+		with tf.device('/cpu:0'):
+			om=tf.Variable(xavier_init(n_in, n_z),name='out_mean',trainable=embeddings_trainable)
+			ols=tf.Variable(xavier_init(n_in, n_z),name='out_log_sigma',trainable=embeddings_trainable)
 		all_weights['variational_encoding'] = {
-			'out_mean': tf.Variable(xavier_init(n_in, n_z),name='out_mean',trainable=embeddings_trainable),
-			'out_log_sigma': tf.Variable(xavier_init(n_in, n_z),name='out_log_sigma',trainable=embeddings_trainable),
+			'out_mean': om,
+			'out_log_sigma': ols,
 			'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='in_affine_weight'),
 			'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='in_affine_bias')
 			}
+		print all_weights['variational_encoding']['out_mean']
 		# else:
 		# 	all_weights['biases_variational_encoding'] = {
 		# 		'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32),name='out_meanb',trainable=embeddings_trainable)}
@@ -548,10 +562,11 @@ class VariationalAutoencoder(object):
 		if not form3:
 			z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],self.x)
 		else:
-			with tf.device('/cpu:0'):
-				x=tf.nn.embedding_lookup(self.embw,self.x)
-			x+=self.embb
-			z,vae_loss=self._vae_sample_mid(ve_weights[0],ve_weights[1],x)
+			x=self.x
+			# with tf.device('/cpu:0'):
+			# 	x=tf.nn.embedding_lookup(self.embw,self.x)
+			# x+=self.embb
+			z,vae_loss=self._vae_sample_mid(ve_weights[0],ve_weights[1],x,lookup=True)
 		self.word_var=z
 		embedding=tf.matmul(z,aff_weights['affine_weight'])+aff_weights['affine_bias']
 		return embedding,vae_loss
@@ -566,17 +581,19 @@ class VariationalAutoencoder(object):
 				z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],tf.one_hot(x,depth=self.network_architecture['n_input']))
 				all_the_f_one_h.append(tf.one_hot(x,depth=self.network_architecture['n_input']))
 		print z.shape
+		# z=tf.nn.l2_normalize(z,dim=-1)
 		self.mid_var=z
 		embedding=tf.matmul(z,lstm_weights['affine_weight'])+lstm_weights['affine_bias']
 		return embedding,vae_loss
 
 	def _get_word_embedding(self, ve_weights, lstm_weights, x,logit=False):
 		if form3:
-			with tf.device('/cpu:0'):
-				x=tf.nn.embedding_lookup(self.embw,x)
-			x+=self.embb
+			# with tf.device('/cpu:0'):
+			# 	x=tf.nn.embedding_lookup(self.embw,x)
+			# x+=self.embb
+			pass
 		if logit:
-			z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x)
+			z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x,lookup=True)
 		else:
 			if not form2:
 				z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x, True)
@@ -595,9 +612,13 @@ class VariationalAutoencoder(object):
 				if not vanilla:
 					logvar=tf.matmul(x,weights['out_log_sigma'])+biases['out_log_sigma']
 			else:
-				mu=tf.nn.embedding_lookup(weights['out_mean'],x)+biases['out_mean']
+				with tf.device('/cpu:0'):
+					mu=tf.nn.embedding_lookup(weights['out_mean'],x)
+				mu+=biases['out_mean']
 				if not vanilla:
-					logvar=tf.nn.embedding_lookup(weights['out_log_sigma'],x)+biases['out_log_sigma']
+					with tf.device('/cpu:0'):
+						logvar=tf.nn.embedding_lookup(weights['out_log_sigma'],x)
+					logvar+=biases['out_log_sigma']
 
 			if not vanilla:
 				epsilon=tf.random_normal(tf.shape(logvar),name='epsilon')
@@ -618,9 +639,13 @@ class VariationalAutoencoder(object):
 				if mid_vae:
 					logvar=tf.matmul(x,weights['out_log_sigma'])+biases['out_log_sigma']
 			else:
-				mu=tf.nn.embedding_lookup(weights['out_mean'],x)+biases['out_mean']
+				with tf.device('/cpu:0'):
+					mu=tf.nn.embedding_lookup(weights['out_mean'],x)
+				mu+=biases['out_mean']
 				if mid_vae:
-					logvar=tf.nn.embedding_lookup(weights['out_log_sigma'],x)+biases['out_log_sigma']
+					with tf.device('/cpu:0'):
+						logvar=tf.nn.embedding_lookup(weights['out_log_sigma'],x)
+					logvar+=biases['out_log_sigma']
 
 			if mid_vae:
 				epsilon=tf.random_normal(tf.shape(logvar),name='epsilon')
@@ -634,6 +659,7 @@ class VariationalAutoencoder(object):
 				KLD = -0.5 * tf.reduce_sum(1 + logvar - tf.pow(mu, 2) - tf.exp(logvar),axis=-1)
 				print logvar.shape,epsilon.shape,std.shape,z.shape,KLD.shape
 			return z,KLD
+
 
 	def _create_loss_optimizer(self):
 		
@@ -653,7 +679,7 @@ class VariationalAutoencoder(object):
 		self.test_op = \
 			tf.test.compute_gradient_error(self.x,np.array([self.batch_size,self.n_words]),self.loss,[1],extra_feed_dict={})
 		
-	def partial_fit(self, X,y,mask,testify=False,timestep=0):
+	def partial_fit(self, X,y,mask,testify=False,timestep=0,labels=None):
 		"""Train model based on mini-batch of input data.
 		
 		Return cost of mini-batch.
@@ -663,7 +689,7 @@ class VariationalAutoencoder(object):
 			exit()
 		else:
 			opt, cost,shit = self.sess.run((self.optimizer, self.loss,self.debug), 
-									  feed_dict={self.x: X, self.caption_placeholder: y, self.mask: mask,self.timestep:timestep})
+									  feed_dict={self.x: X, self.caption_placeholder: y, self.mask: mask,self.timestep:timestep,self.labels:labels})
 			# print shit
 			# print deb
 			# exit()
@@ -812,7 +838,15 @@ def train(network_architecture, learning_rate=0.001,
 			# if epoch==2 and i ==0:
 			# 	testify=True
 			# cost,loss = vae.partial_fit(batch_xs,y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),mask[indlist[i*batch_size:(i+1)*batch_size]],timestep=epoch*total_batch+ts,testify=testify)
-			cost,loss = vae.partial_fit(batch_xs,y[inds].astype(np.uint32),mask[inds],timestep=(epoch)+1e-3,testify=testify)
+			labels=[]
+			batch_ys=y[inds].astype(np.uint32)
+			for x,_y in enumerate(batch_ys):
+				for l in _y:
+					if l!=0:
+						labels.append(l)
+			labels=np.array(labels,dtype=np.uint32)
+			cost,loss = vae.partial_fit(batch_xs,batch_ys,mask[inds],timestep=(epoch)+1,testify=testify,labels=labels)
+			# cost,loss = vae.partial_fit(batch_xs,y[inds].astype(np.uint32),mask[inds],timestep=(epoch)+1e-3,testify=testify)
 
 			# Compute average loss
 			avg_cost = avg_cost * i /(i+1) +cost/(i+1)
@@ -900,6 +934,7 @@ if __name__ == "__main__":
 	if sys.argv[14]=='ctc_loss':
 		use_ctc=True
 		losstype='ctc'
+		n_input+=1
 	lstm_stack=int(sys.argv[15])
 	use_bdlstm=False
 	bdlstmtype=''

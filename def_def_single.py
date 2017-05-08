@@ -403,8 +403,8 @@ class VariationalAutoencoder(object):
 		input_embedding,input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
 		input_embedding=tf.nn.l2_normalize(input_embedding,dim=-1)
 		self.other_loss=tf.constant(0,dtype=tf.float32)
-		KLD_penalty=tf.tanh(tf.cast(self.timestep,tf.float32)/(800000/18.0))
-		cos_penalty=tf.maximum(-0.1,tf.tanh(tf.cast(self.timestep,tf.float32)/(18.0)))
+		KLD_penalty=(tf.cast(self.timestep,tf.float32)/(800000/18.0))*1e-3
+		cos_penalty=tf.maximum(-0.1,(tf.cast(self.timestep,tf.float32)/(18.0)))*1e-3
 
 		input_KLD_loss=0
 		if form3:

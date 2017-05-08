@@ -389,8 +389,8 @@ class VariationalAutoencoder(object):
 		input_embedding,input_embedding_KLD_loss=self._get_middle_embedding([network_weights['middle_encoding'],network_weights['biases_middle_encoding']],network_weights['middle_encoding'],outs,logit=True)
 		input_embedding=tf.nn.l2_normalize(input_embedding,dim=-1)
 		other_loss=tf.constant(0,dtype=tf.float32)
-		KLD_penalty=tf.tanh(tf.cast(self.timestep,tf.float32)/1.0)
-		cos_penalty=tf.maximum(-0.1,tf.tanh(tf.cast(self.timestep,tf.float32)/(5.0)))
+		KLD_penalty=(tf.cast(self.timestep,tf.float32)/1.0)*1e-3
+		cos_penalty=tf.maximum(-0.1,(tf.cast(self.timestep,tf.float32)/(5.0)))*1e-3
 
 		input_KLD_loss=0
 		if form3:
@@ -820,7 +820,7 @@ def train(network_architecture, learning_rate=0.001,
 			# if epoch==2 and i ==0:
 			# 	testify=True
 			# cost,loss = vae.partial_fit(batch_xs,y[indlist[i*batch_size:(i+1)*batch_size]].astype(np.uint32),mask[indlist[i*batch_size:(i+1)*batch_size]],timestep=epoch*total_batch+ts,testify=testify)
-			cost,loss = vae.partial_fit(batch_xs,y[inds].astype(np.uint32),mask[inds],timestep=(epoch)+1e-3,testify=testify)
+			cost,loss = vae.partial_fit(batch_xs,y[inds].astype(np.uint32),mask[inds],timestep=(epoch)+1,testify=testify)
 
 			# Compute average loss
 			avg_cost = avg_cost * i /(i+1) +cost/(i+1)
