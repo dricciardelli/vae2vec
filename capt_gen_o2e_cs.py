@@ -690,7 +690,7 @@ if __name__=='__main__':
     annotation_path = './data/results_20130124.token'
     import sys
     feats, captions = get_data(annotation_path, feature_path)
-    n_input=50001
+    n_input=50000
     binary_dim=n_input
     n_lstm_input=512
     n_z=256

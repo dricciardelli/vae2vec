@@ -81,8 +81,14 @@ def load_text(n,capts,num_samples=None):
     # np.save('yc',y)
     # np.save('maskc',mask)
     X=np.load('Xs.npy','r')
-    y=np.load('yc.npy','r')
-    mask=np.load('maskc.npy','r')
+    if capts is None:
+        
+        y=np.load('yc.npy','r')
+        mask=np.load('maskc.npy','r')
+    else:
+        y=np.load('ycoh.npy','r')
+        # auxmask=np.load('maskaux.npy','r')
+        mask=np.load('maskmainaux.npy','r')
     print (np.max(y))
     return X, y, mask,rev_map
 
@@ -322,10 +328,10 @@ class Caption_Generator():
         flat_caption_placeholder=tf.reshape(caption_placeholder,[self.batch_size*self.n_lstm_steps,-1])
 
         #leverage one-hot sparsity to lookup embeddings fast
-        embedded_input,KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'],flat_caption_placeholder,logit=True)
+        embedded_input,KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['LSTM'],flat_caption_placeholder,logit=True)
         KLD_loss=tf.multiply(KLD_loss,tf.reshape(mask,[-1,1]))
         KLD_loss=tf.reduce_sum(KLD_loss)
-        embedded_input=tf.matmul(embedded_input,self.word_embedding)+self.embedding_bias
+        # embedded_input=tf.matmul(embedded_input,self.word_embedding)+self.embedding_bias
         word_embeddings=tf.reshape(embedded_input,[self.batch_size,self.n_lstm_steps,-1])
         #initialize lstm state
         state = self.lstm.zero_state(self.batch_size, dtype=tf.float32)
@@ -401,25 +407,19 @@ class Caption_Generator():
         return img, all_words
     def _initialize_weights(self):
         all_weights = dict()
-        trainability=False
+        trainability=True
         if not same_embedding:
             all_weights['input_meaning'] = {
                 'affine_weight': tf.Variable(xavier_init(self.n_z, self.n_lstm_input),name='affine_weight',trainable=trainability),
                 'affine_bias': tf.Variable(tf.zeros(self.n_lstm_input),name='affine_bias',trainable=trainability)}
-        if not vanilla:
-            all_weights['biases_variational_encoding'] = {
-                'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability),
-                'out_log_sigma': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_log_sigmab',trainable=trainability)}
-            all_weights['variational_encoding'] = {
-                'out_mean': tf.Variable(xavier_init(self.n_z, self.n_z),name='out_mean',trainable=trainability),
-                'out_log_sigma': tf.Variable(xavier_init(self.n_z, self.n_z),name='out_log_sigma',trainable=trainability)}
-            
-        else:
-            all_weights['biases_variational_encoding'] = {
-                'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability)}
-            all_weights['variational_encoding'] = {
-                'out_mean': tf.Variable(xavier_init(self.n_z, self.n_z),name='out_mean',trainable=trainability)}
-            
+        with tf.device('/cpu:0'):
+            om=tf.Variable(xavier_init(self.n_input, self.n_z),name='out_mean',trainable=trainability)
+        all_weights['biases_variational_encoding'] = {
+            'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability),
+            'out_log_sigma': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_log_sigmab',trainable=trainability)}
+        all_weights['variational_encoding'] = {
+            'out_mean': om,
+            'out_log_sigma': tf.Variable(xavier_init(self.n_input, self.n_z),name='out_log_sigma',trainable=trainability)}            
         # self.no_reload+=all_weights['input_meaning'].values()
         # self.var_embs=[]
         # if transfertype2:
@@ -428,21 +428,22 @@ class Caption_Generator():
         # self.lstm=tf.contrib.rnn.BasicLSTMCell(n_lstm_input)
         # if lstm_stack>1:
         #     self.lstm=tf.contrib.rnn.MultiRNNCell([self.lstm]*lstm_stack)
-        # all_weights['LSTM'] = {
-        #     'affine_weight': tf.Variable(xavier_init(n_z, n_lstm_input),name='affine_weight2'),
-        #     'affine_bias': tf.Variable(tf.zeros(n_lstm_input),name='affine_bias2'),
-        #     'encoding_weight': tf.Variable(xavier_init(n_lstm_input,n_input),name='encoding_weight'),
-        #     'encoding_bias': tf.Variable(tf.zeros(n_input),name='encoding_bias'),
-        #     'lstm': self.lstm}
+        all_weights['LSTM'] = {
+            'affine_weight': tf.Variable(xavier_init(self.n_z, self.n_lstm_input),name='affine_weight2'),
+            'affine_bias': tf.Variable(tf.zeros(self.n_lstm_input),name='affine_bias2'),
+            'encoding_weight': tf.Variable(xavier_init(self.n_lstm_input,self.n_input),name='encoding_weight'),
+            'encoding_bias': tf.Variable(tf.zeros(self.n_input),name='encoding_bias')
+            }
         all_encoding_weights=[all_weights[x].values() for x in all_weights]
         
         for w in all_encoding_weights:
             self.all_encoding_weights+=w
+        all_weights['LSTM']['lstm']= self.dlstm
         return all_weights
     def _get_word_embedding(self, ve_weights, lstm_weights, x,logit=False):
         x=tf.matmul(x,self.embw)+self.embb
         if logit:
-            z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x)
+            z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x,lookup=True)
         else:
             if not form2:
                 z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x, True)
@@ -451,7 +452,7 @@ class Caption_Generator():
                 all_the_f_one_h.append(tf.one_hot(x,depth=self.n_input))
 
         embedding=tf.matmul(z,lstm_weights['affine_weight'])+lstm_weights['affine_bias']
-        embedding=z
+        # embedding=z
         return embedding,vae_loss
     def _vae_sample(self, weights, biases, x, lookup=False):
             #TODO: consider adding a linear transform layer+relu or softplus here first 
@@ -588,7 +589,7 @@ def train(learning_rate=0.001, continue_training=False):
     sess = tf.InteractiveSession()
     n_words = len(wordtoix)
     maxlen = 30
-    X, final_captions, mask, _map = load_text(2**19-3,captions)
+    X, final_captions, captmask, _map = load_text(50000-2,captions)
     running_decay=1
     decay_rate=0.9999302192204246
     with tf.device('/gpu:0'):
@@ -627,10 +628,11 @@ def train(learning_rate=0.001, continue_training=False):
 
             for ind, row in enumerate(current_mask_matrix):
                 row[:nonzeros[ind]] = 1
+            current_mask_matrix=captmask[index[start:end]]
 
             _, loss_value,total_loss = sess.run([train_op, caption_generator.print_loss,loss], feed_dict={
                 image: current_feats.astype(np.float32),
-                caption_generator.output_placeholder : current_caption_matrix.astype(np.int32),
+                caption_generator.output_placeholder : current_capts.astype(np.int32),
                 mask : current_mask_matrix.astype(np.float32),
                 sentence : current_capts.astype(np.float32)
                 })

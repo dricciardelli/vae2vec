@@ -1,3 +1,5 @@
+import tensorflow as tf
+from tensorflow.python.ops import rnn
 def linear(input_, output_size, scope=None):
     '''
     Linear map: output[k] = sum_i(Matrix[k, i] * input_[i] ) + Bias[k]
@@ -43,7 +45,14 @@ def highway(input_, size, num_layers=1, bias=-2.0, f=tf.nn.relu, scope='Highway'
             input_ = output
 
     return output
-
+def xavier_init(fan_in, fan_out, constant=1e-4): 
+    """ Xavier initialization of network weights"""
+    # https://stackoverflow.com/questions/33640581/how-to-do-xavier-initialization-on-tensorflow
+    low = -constant*np.sqrt(6.0/(fan_in + fan_out)) 
+    high = constant*np.sqrt(6.0/(fan_in + fan_out))
+    return tf.random_uniform((fan_in, fan_out), 
+                             minval=low, maxval=high, 
+                             dtype=tf.float32)
 class DC(object):
     """
     A CNN for text classification.
@@ -83,7 +92,7 @@ class DC(object):
                 self.embedded_chars = tf.matmul(tf.reshape(self.input_x,[-1,emb_dim_in]),self.W)
                 self.b=tf.Variable(tf.zeros([embedding_size]),dtype=tf.float32)
                 self.embedded_chars+=self.b
-                self.embedded_chars=tf.reshape(self.embedded_chars.[-1,sequence_length,embedding_size])
+                self.embedded_chars=tf.reshape(self.embedded_chars,[-1,sequence_length,embedding_size])
                 self.embedded_chars_expanded = tf.expand_dims(self.embedded_chars, -1)
 
             # Create a convolution + maxpool layer for each filter size
@@ -150,7 +159,7 @@ class DLSTM(object):
         self.input_y = tf.placeholder(tf.float32, [None, num_classes], name="input_y")
         self.dropout_keep_prob = tf.placeholder(tf.float32, name="dropout_keep_prob")
         
-        self.vl=[self.W,self.b,self.W2,self.b2]
+        # self.vl=[self.W,self.b,self.W2,self.b2]
         self.forward_cell=tf.contrib.rnn.BasicLSTMCell(hidden_dim)
         if bidir:
             self.backward_cell=tf.contrib.rnn.BasicLSTMCell(hidden_dim)
@@ -159,25 +168,40 @@ class DLSTM(object):
         self.hidden_dim=hidden_dim
         self.sequence_length=sequence_length
         self.middle_dim=middle_dim
-        self.emb_dim_in=embed_dim_in
-        self._build_network()
-    def _build_network(self):
+        self.emb_dim_in=emb_dim_in
         trainability=False
-        with tf.device('/cpu:0'):
-            om=tf.Variable(xavier_init(self.n_z, self.n_z),name='out_mean',trainable=trainability)
-        if not vanilla:
-            all_weights['biases_variational_encoding'] = {
-                'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability),
-                'out_log_sigma': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_log_sigmab',trainable=trainability)}
-            all_weights['variational_encoding'] = {
-                'out_mean': om,
-                'out_log_sigma': tf.Variable(xavier_init(self.n_input, self.n_z),name='out_log_sigma',trainable=trainability)}
+        # with tf.device('/cpu:0'):
+        #     om=tf.Variable(xavier_init(self.n_z, self.n_z),name='out_mean',trainable=trainability)
+        # if not vanilla:
+        #     all_weights['biases_variational_encoding'] = {
+        #         'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability),
+        #         'out_log_sigma': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_log_sigmab',trainable=trainability)}
+        #     all_weights['variational_encoding'] = {
+        #         'out_mean': om,
+        #         'out_log_sigma': tf.Variable(xavier_init(self.n_input, self.n_z),name='out_log_sigma',trainable=trainability)}
             
+        # else:
+        #     all_weights['biases_variational_encoding'] = {
+        #         'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability)}
+        #     all_weights['variational_encoding'] = {
+        #         'out_mean': om}
+        self.W=None
+        if not self.bidir:
+            self.W=tf.Variable(tf.random_normal([self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm')
         else:
-            all_weights['biases_variational_encoding'] = {
-                'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability)}
-            all_weights['variational_encoding'] = {
-                'out_mean': om}
+            self.W=tf.Variable(tf.random_normal([2*self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm')
+
+        self.b=tf.Variable(tf.zeros([self.middle_dim]),name='dlstmb')
+        self.W2=tf.Variable(tf.random_normal([self.middle_dim,self.num_classes]),name='dlstm2')
+        self.b2=tf.Variable(tf.zeros([self.num_classes]),name='dlstm2b')
+        # all_encoding_weights=[all_weights[x].values() for x in all_weights]
+        # encoding_weights=[]
+        # for w in all_encoding_weights:
+        #     encoding_weights+=w
+        # self.Dvars=[self.W,self.b,self.W2,self.b2]+encoding_weights
+        # self._build_network()
+    def _build_network(self):
+        
         embedded_input,KLD_loss=self._get_word_embedding([all_weights['variational_encoding'],all_weights['biases_variational_encoding']],None,tf.reshape(self.input_x,[-1]),logit=True)
         embedded_input=tf.reshape(embedded_input,[-1,self.sequence_length,self.emb_dim_in])
         if self.bidir:
@@ -188,14 +212,7 @@ class DLSTM(object):
             
             outs=tf.reshape(outs,[-1,self.sequence_length*self.hidden_dim])
 
-        if not self.bidir:
-            self.W=tf.Variable(tf.random_normal([self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm')
-        else:
-            self.W=tf.Variable(tf.random_normal([2*self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm')
-
-        self.b=tf.Variable(tf.zeros[self.middle_dim],name='dlstmb')
-        self.W2=tf.Variable(tf.random_normal([self.middle_dim,self.num_classes]),name='dlstm2')
-        self.b2=tf.Variable(tf.zeros([self.num_classes]),name='dlstm2b')
+        
         middle=tf.matmul(outs,self.W)+self.b
         middle=tf.nn.dropout(self.dropout_keep_prob)
         
@@ -203,21 +220,14 @@ class DLSTM(object):
         self.D1=tf.sigmoid(out)
     def discriminate(self,input_x,train=True):
         if self.bidir:
-            outs,_,_=tf.contrib.rnn.static_bidirectional_rnn(self.forward_cell,self.backward_cell,input_x)
+            outs,_,_=tf.contrib.rnn.static_bidirectional_rnn(self.forward_cell,self.backward_cell,input_x,time_major=False)
             outs=tf.reshape(outs,[-1,self.sequence_length*2*self.hidden_dim])
         else:
-            outs,states=tf.contrib.rnn.static_rnn(self.forward_cell,input_x)
+            outs,states=rnn.dynamic_rnn(self.forward_cell,input_x,dtype=tf.float32,time_major=False)
             outs=tf.reshape(outs,[-1,self.sequence_length*self.hidden_dim])
-        if not self.bidir:
-            self.W=tf.Variable(tf.random_normal([self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm',trainable=train)
-        else:
-            self.W=tf.Variable(tf.random_normal([2*self.hidden_dim*self.sequence_length,self.middle_dim]),name='dlstm',trainable=train)
-
-        self.b=tf.Variable(tf.zeros[self.middle_dim],name='dlstmb',trainable=train)
-        self.W2=tf.Variable(tf.random_normal([self.middle_dim,self.num_classes]),name='dlstm2',trainable=train)
-        self.b2=tf.Variable(tf.zeros([self.num_classes]),name='dlstm2b',trainable=train)
+        
         middle=tf.matmul(outs,self.W)+self.b
-        middle=tf.nn.dropout(self.dropout_keep_prob)
+        middle=tf.nn.dropout(middle,self.dropout_keep_prob)
         out=tf.matmul(middle,self.W2)+self.b2
         return tf.sigmoid(out)
         # return loss=tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=out,labels=input_y))

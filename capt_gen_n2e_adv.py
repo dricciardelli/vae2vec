@@ -15,9 +15,10 @@ from keras.preprocessing import sequence
 from collections import Counter
 from collections import defaultdict
 import itertools
+import discriminators
 test_image_path='./data/acoustic-guitar-player.jpg'
 vgg_path='./data/vgg16-20160129.tfmodel'
-n=2**19-3
+n=50000-2
 def map_lambda():
     return n+1
 def rev_map_lambda():
@@ -69,20 +70,25 @@ def load_text(n,capts,num_samples=None):
     #                              token_pattern='\\b\\w+\\b') # Keep single character words
 
     # _map,rev_map=get_one_hot_map(word_list,def_list,n)
-    _map=pkl.load(open('maps.pkl','rb'))
-    rev_map=pkl.load(open('rev_maps.pkl','rb'))
+    _map=pkl.load(open('mapaoh.pkl','rb'))
+    rev_map=pkl.load(open('rev_mapaoh.pkl','rb'))
     if num_samples is not None:
         num_samples=len(capts)
     # X = map_one_hot(word_list[:num_samples],_map,1,n)
     # y = (36665, 56210)
     # print _map
-    y,mask = map_one_hot(capts[:num_samples],_map,maxlen,n)
-    # np.save('X',X)
-    # np.save('yc',y)
-    # np.save('maskc',mask)
-    X=np.load('Xs.npy','r')
-    y=np.load('yc.npy','r')
-    mask=np.load('maskc.npy','r')
+    if capts is not None:
+        # y,mask = map_one_hot(capts[:num_samples],_map,maxlen,n)
+        # np.save('ycoh')
+        y=np.load('ycoh.npy','r')
+    else:
+        # np.save('X',X)
+        # np.save('yc',y)
+        # np.save('maskc',mask)
+        
+        y=np.load('yaoh.npy','r')
+    X=np.load('Xaoh.npy','r')
+    mask=np.load('maskaoh.npy','r')
     print (np.max(y))
     return X, y, mask,rev_map
 
@@ -182,31 +188,20 @@ def map_one_hot(corpus,_map,maxlen,n):
             return rtn
         else:
             total_not=0
-            if not onehot:
-                rtn=np.zeros([len(corpus),binary_dim],dtype=np.float32)
-            else:
-                rtn=np.zeros([len(corpus),2**binary_dim],dtype=np.float32)
+            rtn=np.zeros([len(corpus)],dtype=np.float32)
             for l,line in enumerate(corpus):
-            # if len(line)==0:
-            #   rtn[l]=n+2
-            # else:
-            #   if line not in _map:
-            #       total_not+=1
-                mapped=_map[line]
-                if mapped==75001:
-                    total_not+=1
-                if onehot:
-                    binrep=np.zeros(2**binary_dim)
-                    print line
-                    binrep[mapped]=1
+                if len(line)==0:
+                    rtn[l,-1]=1
                 else:
-                    binrep=(1&(mapped/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
-                rtn[l]=binrep
+                    mapped=_map[line]
+                    if mapped==75001:
+                        total_not+=1
+                    rtn[l]=mapped
             print (total_not,len(corpus))
             return rtn
     else:
         if form2:
-            rtn=np.zeros([len(corpus),maxlen+2,binary_dim],dtype=np.float32)
+            rtn=np.zeros([len(corpus),maxlen+2],dtype=np.float32)
         else:
             rtn=np.zeros([len(corpus),maxlen+2],dtype=np.int32)
         print (rtn.shape)
@@ -219,17 +214,13 @@ def map_one_hot(corpus,_map,maxlen,n):
         for l,_line in enumerate(corpus):
             x=0
             line=_line.split()
-            for i in range(min(len(line),maxlen)):
+            for i in range(min(len(line),maxlen-1)):
                 # if line[i] not in _map:
                 #   nopes+=1
 
                 mapped=_map[line[i]]
-                if form2:
-                    binrep=(1&(mapped/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
-                    rtn[l,i+1,:]=binrep
-                else:
-                    rtn[l,i+1]=mapped
-                if mapped==75001:
+                rtn[l,i+1]=mapped
+                if mapped==n+1:
                     wtf+=1
                 mask[l,i+1]=1.0
                 totes+=1
@@ -237,10 +228,8 @@ def map_one_hot(corpus,_map,maxlen,n):
             to_app=n+2
             if zero_end_tok:
                 to_app=0
-            if form2:
-                rtn[l,x+1,:]=(1&(to_app/(2**np.arange(binary_dim))).astype(np.uint32)).astype(np.float32)
-            else:
-                rtn[l,x+1]=to_app
+            
+            rtn[l,x+1]=to_app
             mask[l,x+1]=1.0
 
         print (nopes,totes,wtf)
@@ -282,7 +271,7 @@ class Caption_Generator():
         self.from_image=from_image
 
         # declare the variables to be used for our word embeddings
-        self.word_embedding = tf.Variable(tf.random_uniform([self.n_lstm_input, self.dim_embed], -0.1, 0.1), name='word_embedding')
+        self.word_embedding = tf.Variable(tf.random_uniform([self.n_z, self.dim_embed], -0.1, 0.1), name='word_embedding')
 
         self.embedding_bias = tf.Variable(tf.zeros([dim_embed]), name='embedding_bias')
         
@@ -294,15 +283,15 @@ class Caption_Generator():
         self.img_embedding_bias = tf.Variable(tf.zeros([dim_hidden]), name='img_embedding_bias')
 
         # declare the variables to go from an LSTM output to a word encoding output
-        self.word_encoding = tf.Variable(tf.random_uniform([dim_hidden, self.n_lstm_input], -0.1, 0.1), name='word_encoding')
+        self.word_encoding = tf.Variable(tf.random_uniform([dim_hidden, self.n_z], -0.1, 0.1), name='word_encoding')
         # initialize this bias variable from the preProBuildWordVocab output
         # optional initialization setter for encoding bias variable 
         if init_b is not None:
             self.word_encoding_bias = tf.Variable(init_b, name='word_encoding_bias')
         else:
-            self.word_encoding_bias = tf.Variable(tf.zeros([self.n_lstm_input]), name='word_encoding_bias')
-
-        self.embw=tf.Variable(xavier_init(self.n_input,self.n_z),name='embw')
+            self.word_encoding_bias = tf.Variable(tf.zeros([self.n_z]), name='word_encoding_bias')
+        with tf.device('/cpu:0'):
+            self.embw=tf.Variable(xavier_init(self.n_input,self.n_z),name='embw')
         self.embb=tf.Variable(tf.zeros([self.n_z]),name='embb')
         self.all_encoding_weights=[self.embw,self.embb]
 
@@ -310,7 +299,8 @@ class Caption_Generator():
         # declaring the placeholders for our extracted image feature vectors, our caption, and our mask
         # (describes how long our caption is with an array of 0/1 values of length `maxlen`  
         img = tf.placeholder(tf.float32, [self.batch_size, self.dim_in])
-        caption_placeholder = tf.placeholder(tf.float32, [self.batch_size, self.n_lstm_steps, self.n_input])
+        self.img=img
+        caption_placeholder = tf.placeholder(tf.int32, [self.batch_size, self.n_lstm_steps])
         mask = tf.placeholder(tf.float32, [self.batch_size, self.n_lstm_steps])
         self.output_placeholder = tf.placeholder(tf.int32, [self.batch_size, self.n_lstm_steps])
 
@@ -319,17 +309,25 @@ class Caption_Generator():
         # getting an initial LSTM embedding from our image_imbedding
         image_embedding = tf.matmul(img, self.img_embedding) + self.img_embedding_bias
         
-        flat_caption_placeholder=tf.reshape(caption_placeholder,[self.batch_size*self.n_lstm_steps,-1])
+        flat_caption_placeholder=tf.reshape(caption_placeholder,[-1])
 
         #leverage one-hot sparsity to lookup embeddings fast
         embedded_input,KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'],flat_caption_placeholder,logit=True)
         KLD_loss=tf.multiply(KLD_loss,tf.reshape(mask,[-1,1]))
-        KLD_loss=tf.reduce_sum(KLD_loss)*0
-        word_embeddings=tf.matmul(embedded_input,self.word_embedding)+self.embedding_bias
-        word_embeddings=tf.reshape(word_embeddings,[self.batch_size,self.n_lstm_steps,-1])
+        KLD_loss=tf.reduce_sum(KLD_loss)
+        # word_embeddings=tf.matmul(embedded_input,self.word_embedding)+self.embedding_bias
+        # with tf.device('/cpu:0'):
+        #     word_embeddings=tf.nn.embedding_lookup(self.embw,flat_caption_placeholder)
+        # word_embeddings+=self.embb
+        # word_embeddings=tf.reshape(word_embeddings,[self.batch_size,self.n_lstm_steps,-1])
+        embedded_input=tf.stop_gradient(embedded_input)
+        embedded_input=tf.reshape(embedded_input,[self.batch_size,self.n_lstm_steps,-1])
+        self.embedded_input=embedded_input[:,1:,:]
+        embedded_input=tf.nn.l2_normalize(embedded_input,dim=-1)
         #initialize lstm state
         state = self.lstm.zero_state(self.batch_size, dtype=tf.float32)
         rnn_output=[]
+        total_loss=0
         with tf.variable_scope("RNN"):
             # unroll lstm
             for i in range(self.n_lstm_steps): 
@@ -337,7 +335,7 @@ class Caption_Generator():
                    # if this isn’t the first iteration of our LSTM we need to get the word_embedding corresponding
                    # to the (i-1)th word in our caption 
                     
-                    current_embedding = word_embeddings[:,i-1,:]
+                    current_embedding = image_embedding
                 else:
                      #if this is the first iteration of our LSTM we utilize the embedded image as our input 
                     current_embedding = image_embedding
@@ -346,13 +344,17 @@ class Caption_Generator():
                     tf.get_variable_scope().reuse_variables()
 
                 out, state = self.lstm(current_embedding, state)
+                if i>0:
+                    out=tf.matmul(out,self.word_encoding)+self.word_encoding_bias
+                    rnn_output.append(tf.expand_dims(out,axis=1))
+                    out=tf.nn.l2_normalize(out,dim=-1)
+                    total_loss+=tf.reduce_sum(tf.reduce_sum(tf.multiply(embedded_input[:,i,:],out),axis=-1)*mask[:,i])
 
-                rnn_output.append(tf.expand_dims(out,1))
-        #perform classification of output
-        rnn_output=tf.concat(rnn_output,axis=1)
-        rnn_output=tf.reshape(rnn_output,[self.batch_size*(self.n_lstm_steps),-1])
-        encoded_output=tf.matmul(rnn_output,self.word_encoding)+self.word_encoding_bias
-        #get loss
+        # #perform classification of output
+        self.embedded_out=tf.concat(rnn_output,axis=1)
+        # rnn_output=tf.reshape(rnn_output,[self.batch_size*(self.n_lstm_steps),-1])
+        # encoded_output=tf.matmul(rnn_output,self.word_encoding)+self.word_encoding_bias
+        # #get loss
 
         # normed_embedding= tf.nn.l2_normalize(encoded_output, dim=-1)
         # normed_target=tf.nn.l2_normalize(embedded_input,dim=-1)
@@ -360,19 +362,21 @@ class Caption_Generator():
         # cos_sim=(tf.reduce_sum(cos_sim,axis=-1))
         # cos_sim=tf.reshape(cos_sim,[self.batch_size,-1])
         # cos_sim=tf.reduce_sum(cos_sim[:,1:]*mask[:,1:])
-        # cos_sim=cos_sim/tf.reduce_sum(mask[:,1:])
+        cos_sim=total_loss/tf.reduce_sum(mask[:,1:])
         # self.exp_loss=tf.reduce_sum((-cos_sim))
-        # # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
-        # total_loss = tf.reduce_sum(-(cos_sim))
-        mse=tf.reduce_sum(tf.square(encoded_output-embedded_input),axis=-1)[:,1:]*mask[:,1:]
-        mse=tf.reduce_sum(mse)/tf.reduce_sum(mask[:,1:])
+        # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
+        total_loss = tf.reduce_sum(-(cos_sim))
+        # mse=tf.reduce_sum(tf.reshape(tf.square(encoded_output-embedded_input),[self.batch_size,self.n_lstm_steps,-1]),axis=-1)[:,1:]*(mask[:,1:])
+        # mse=tf.reduce_sum(mse)/tf.reduce_sum(mask[:,1:])
 
         #average over timeseries length
 
         # total_loss=tf.reduce_sum(masked_xentropy)/tf.reduce_sum(mask[:,1:])
+        # total_loss=mse
         self.print_loss=total_loss
         total_loss+=KLD_loss/tf.reduce_sum(mask)
         return total_loss, img,  caption_placeholder, mask
+
 
     def build_generator(self, maxlen, batchsize=1,from_image=False):
         #same setup as `build_model` function
@@ -387,27 +391,27 @@ class Caption_Generator():
             # in the first iteration we have no previous word, so we directly pass in the image embedding
             # and set the `previous_word` to the embedding of the start token ([0]) for the future iterations
             output, state = self.lstm(image_embedding, state)
-            previous_word = tf.nn.embedding_lookup(self.word_embedding, [0]) + self.embedding_bias
+            # previous_word = tf.nn.embedding_lookup(self.word_embedding, [0]) + self.embedding_bias
 
             for i in range(maxlen):
                 tf.get_variable_scope().reuse_variables()
 
-                out, state = self.lstm(previous_word, state)
+                out, state = self.lstm(image_embedding, state)
 
 
                 # get a get maximum probability word and it's encoding from the output of the LSTM
                 logit = tf.matmul(out, self.word_encoding) + self.word_encoding_bias
-                best_word = tf.argmax(logit, 1)
+                # best_word = tf.argmax(logit, 1)
 
-                with tf.device("/cpu:0"):
-                    # get the embedding of the best_word to use as input to the next iteration of our LSTM 
-                    previous_word = tf.nn.embedding_lookup(self.word_embedding, best_word)
+                # with tf.device("/cpu:0"):
+                #     # get the embedding of the best_word to use as input to the next iteration of our LSTM 
+                #     previous_word = tf.nn.embedding_lookup(self.word_embedding, best_word)
 
-                previous_word += self.embedding_bias
+                # previous_word += self.embedding_bias
 
-                all_words.append(best_word)
+                all_words.append(tf.expand_dims(logit,axis=1))
         self.img=img
-        self.all_words=all_words
+        self.all_words=tf.concat(all_words,axis=1)
         return img, all_words
     def _initialize_weights(self):
         all_weights = dict()
@@ -417,20 +421,20 @@ class Caption_Generator():
                 'affine_weight': tf.Variable(xavier_init(self.n_z, self.n_lstm_input),name='affine_weight',trainable=trainability),
                 'affine_bias': tf.Variable(tf.zeros(self.n_lstm_input),name='affine_bias',trainable=trainability)}
         with tf.device('/cpu:0'):
-            om=tf.Variable(xavier_init(self.n_z, self.n_z),name='out_mean',trainable=trainability)
+            om=tf.Variable(xavier_init(self.n_input, self.n_z),name='out_mean',trainable=trainability)
         if not vanilla:
             all_weights['biases_variational_encoding'] = {
                 'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability),
                 'out_log_sigma': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_log_sigmab',trainable=trainability)}
             all_weights['variational_encoding'] = {
-                'out_mean': tf.Variable(xavier_init(self.n_z, self.n_z),name='out_mean',trainable=trainability),
-                'out_log_sigma': tf.Variable(xavier_init(self.n_z, self.n_z),name='out_log_sigma',trainable=trainability)}
+                'out_mean': om,
+                'out_log_sigma': tf.Variable(xavier_init(self.n_input, self.n_z),name='out_log_sigma',trainable=trainability)}
             
         else:
             all_weights['biases_variational_encoding'] = {
                 'out_mean': tf.Variable(tf.zeros([self.n_z], dtype=tf.float32),name='out_meanb',trainable=trainability)}
             all_weights['variational_encoding'] = {
-                'out_mean': tf.Variable(xavier_init(self.n_z, self.n_z),name='out_mean',trainable=trainability)}
+                'out_mean': om}
             
         # self.no_reload+=all_weights['input_meaning'].values()
         # self.var_embs=[]
@@ -452,9 +456,9 @@ class Caption_Generator():
             self.all_encoding_weights+=w
         return all_weights
     def _get_word_embedding(self, ve_weights, lstm_weights, x,logit=False):
-        x=tf.matmul(x,self.embw)+self.embb
+        # x=tf.matmul(x,self.embw)+self.embb
         if logit:
-            z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x)
+            z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x,lookup=True)
         else:
             if not form2:
                 z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],x, True)
@@ -462,8 +466,8 @@ class Caption_Generator():
                 z,vae_loss=self._vae_sample(ve_weights[0],ve_weights[1],tf.one_hot(x,depth=self.n_input))
                 all_the_f_one_h.append(tf.one_hot(x,depth=self.n_input))
 
-        embedding=tf.matmul(z,lstm_weights['affine_weight'])+lstm_weights['affine_bias']
-        # embedding=z
+        # embedding=tf.matmul(z,self.word_embedding)+self.embedding_bias
+        embedding=z
         return embedding,vae_loss
     def _vae_sample(self, weights, biases, x, lookup=False):
             #TODO: consider adding a linear transform layer+relu or softplus here first 
@@ -472,9 +476,13 @@ class Caption_Generator():
                 if not vanilla:
                     logvar=tf.matmul(x,weights['out_log_sigma'])+biases['out_log_sigma']
             else:
-                mu=tf.nn.embedding_lookup(weights['out_mean'],x)+biases['out_mean']
+                with tf.device('/cpu:0'):
+                    mu=tf.nn.embedding_lookup(weights['out_mean'],x)
+                mu+=biases['out_mean']
                 if not vanilla:
-                    logvar=tf.nn.embedding_lookup(weights['out_log_sigma'],x)+biases['out_log_sigma']
+                    with tf.device('/cpu:0'):
+                        logvar=tf.nn.embedding_lookup(weights['out_log_sigma'],x)
+                    logvar+=biases['out_log_sigma']
 
             if not vanilla:
                 epsilon=tf.random_normal(tf.shape(logvar),name='epsilon')
@@ -583,6 +591,25 @@ batch_size = 128
 momentum = 0.9
 n_epochs = 25
 
+def optimizer(loss, var_list,mult=1):
+    initial_learning_rate = 0.005*mult
+    decay = 0.95
+    num_decay_steps = 150
+    batch = tf.Variable(0)
+    learning_rate = tf.train.exponential_decay(
+        initial_learning_rate,
+        batch,
+        num_decay_steps,
+        decay,
+        staircase=True
+    )
+    optimizer = tf.train.AdamOptimizer(learning_rate).minimize(
+        loss,
+        global_step=batch,
+        var_list=var_list
+    )
+    return optimizer
+
 def train(learning_rate=0.001, continue_training=False):
     
     tf.reset_default_graph()
@@ -603,18 +630,33 @@ def train(learning_rate=0.001, continue_training=False):
     X, final_captions, mask, _map = load_text(2**19-3,captions)
     running_decay=1
     decay_rate=0.9999302192204246
-    with tf.device('/gpu:0'):
-        caption_generator = Caption_Generator(dim_in, dim_hidden, dim_embed, batch_size, maxlen+2, n_words, np.zeros(n_lstm_input).astype(np.float32),n_input=n_input,n_lstm_input=n_lstm_input,n_z=n_z)
+    # with tf.device('/gpu:0'):
+    # with tf.variable_scope('G'):
+    caption_generator = Caption_Generator(dim_in, dim_hidden, dim_embed, batch_size, maxlen+2, n_words, np.zeros(n_z).astype(np.float32),n_input=n_input,n_lstm_input=n_lstm_input,n_z=n_z)
 
-        loss, image, sentence, mask = caption_generator.build_model()
+    loss, image, sentence, mask = caption_generator.build_model()
+    with tf.variable_scope('D') as scope:
+        D=discriminators.DLSTM(maxlen+1,1,500,256,n_z)
+        D1=D.discriminate(caption_generator.embedded_input)
+        scope.reuse_variables()
+        D2=D.discriminate(caption_generator.embedded_out)
+    ld1=tf.reduce_mean(-tf.log(D1))
+    ld2=tf.reduce_mean(-tf.log(1-D2))
+    loss_d = tf.reduce_mean(-tf.log(tf.maximum(1e-8,D1)) - tf.log(tf.maximum(1e-8,1 - D2)))
+    loss_g = tf.reduce_mean(-tf.log(tf.maximum(1e-8,D2)))
+    vars = tf.trainable_variables()
+    d_params = [v for v in vars if v.name.startswith('D/')]
+    g_params = [v for v in vars if v not in d_params]
+    opt_d = optimizer(loss_d, d_params,.5)
+    opt_g = optimizer(loss_g, g_params)
 
     saver = tf.train.Saver(max_to_keep=100)
     train_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
     tf.global_variables_initializer().run()
-    tf.train.Saver(var_list=caption_generator.all_encoding_weights,max_to_keep=100).restore(sess,tf.train.latest_checkpoint('modelsvardefdefsingle'))
+    tf.train.Saver(var_list=caption_generator.all_encoding_weights,max_to_keep=100).restore(sess,tf.train.latest_checkpoint('./models/tensorflow'))
     if continue_training:
         saver.restore(sess,tf.train.latest_checkpoint(model_path))
-    losses=[]
+    losses=[[],[],[]]
 
     for epoch in range(n_epochs):
         if epoch==1:
@@ -639,26 +681,36 @@ def train(learning_rate=0.001, continue_training=False):
 
             for ind, row in enumerate(current_mask_matrix):
                 row[:nonzeros[ind]] = 1
-
-            _, loss_value,total_loss = sess.run([train_op, caption_generator.print_loss,loss], feed_dict={
+            _, ld,_ld2,_ld1 = sess.run([opt_d, loss_d,ld2,ld1], feed_dict={
                 image: current_feats.astype(np.float32),
                 caption_generator.output_placeholder : current_caption_matrix.astype(np.int32),
                 mask : current_mask_matrix.astype(np.float32),
-                sentence : current_capts.astype(np.float32)
+                sentence : current_capts.astype(np.float32),
+                D.dropout_keep_prob: 0.75
                 })
 
-            print("Current Cost: ", loss_value, "\t Epoch {}/{}".format(epoch, n_epochs), "\t Iter {}/{}".format(start,len(feats)))
-            losses.append(loss_value*running_decay)
-            if epoch<9:
-                if i%3==0:
-                    running_decay*=decay_rate
-            else:
-                if i%8==0:
-                    running_decay*=decay_rate
+            _, loss_value,total_loss = sess.run([opt_g, caption_generator.print_loss,loss_g], feed_dict={
+                image: current_feats.astype(np.float32),
+                caption_generator.output_placeholder : current_caption_matrix.astype(np.int32),
+                mask : current_mask_matrix.astype(np.float32),
+                sentence : current_capts.astype(np.float32),
+                D.dropout_keep_prob: 0.75
+                })
+
+            print("Current Cost: ", total_loss, "\t Epoch {}/{}".format(epoch, n_epochs), "\t Iter {}/{}".format(start,len(feats)))
+            losses[0].append(loss_value*running_decay)
+            losses[1].append(total_loss)
+            losses[2].append(ld)
+            # if epoch<9:
+            #     if i%3==0:
+            #         running_decay*=decay_rate
+            # else:
+            #     if i%8==0:
+            #         running_decay*=decay_rate
             i+=1
-            print losses[-1]
+            print [x[-1] for x in losses], _ld1,_ld2
         print("Saving the model from epoch: ", epoch)
-        pkl.dump(losses,open('losses/loss_e2e.pkl','wb'))
+        pkl.dump(losses,open('losses/loss_n2e_adv.pkl','wb'))
         saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
         learning_rate *= 0.95
 def test(sess,image,generated_words,ixtoword,idx=0): # Naive greedy search
@@ -683,15 +735,15 @@ def test(sess,image,generated_words,ixtoword,idx=0): # Naive greedy search
 
 if __name__=='__main__':
 
-    model_path = './models/tensorflow'
+    model_path = './models/tensorflow_n2e_adv'
     feature_path = './data/feats.npy'
     annotation_path = './data/results_20130124.token'
     import sys
     feats, captions = get_data(annotation_path, feature_path)
-    n_input=19
+    n_input=50000
     binary_dim=n_input
-    n_lstm_input=1024
-    n_z=512
+    n_lstm_input=512/2
+    n_z=256
     zero_end_tok=True
     form2=True
     vanilla=True

@@ -23,51 +23,51 @@ def map_lambda():
 def rev_map_lambda():
 	return "<UNK>"
 def load_text(n,num_samples=None):
-	# # fname = 'Oxford_English_Dictionary.txt'
-	# # txt = []
-	# # with open(fname,'rb') as f:
-	# # 	txt = f.readlines()
+	# fname = 'Oxford_English_Dictionary.txt'
+	# txt = []
+	# with open(fname,'rb') as f:
+	# 	txt = f.readlines()
 
-	# # txt = [x.decode('utf-8').strip() for x in txt]
-	# # txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
+	# txt = [x.decode('utf-8').strip() for x in txt]
+	# txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
 
-	# # List of words
-	# # word_list = [x.split(' ', 1)[0].strip() for x in txt]
-	# # # List of definitions
-	# # def_list = [x.split(' ', 1)[1].strip()for x in txt]
-	# with open('./training_data/training_data.pkl','rb') as raw:
-	# 	word_list,dl=pkl.load(raw)
-	# def_list=[]	
-	# # def_list=[' '.join(defi) for defi in def_list]
-	# i=0
-	# # words={}
-	# while i<len( dl):
-	# 	defi=dl[i]
-	# 	if len(defi)>0:
-	# 		def_list+=[' '.join(defi)]
-	# 		i+=1
-	# 	else:
-	# 		dl.pop(i)
-	# 		word_list.pop(i)
+	# List of words
+	# word_list = [x.split(' ', 1)[0].strip() for x in txt]
+	# # List of definitions
+	# def_list = [x.split(' ', 1)[1].strip()for x in txt]
+	with open('./training_data/training_data.pkl','rb') as raw:
+		word_list,dl=pkl.load(raw)
+	def_list=[]	
+	# def_list=[' '.join(defi) for defi in def_list]
+	i=0
+	# words={}
+	while i<len( dl):
+		defi=dl[i]
+		if len(defi)>0:
+			def_list+=[' '.join(defi)]
+			i+=1
+		else:
+			dl.pop(i)
+			word_list.pop(i)
 
-	# # for w,d in zip(word_list,def_list):
-	# # 	if w not in words:
-	# # 		words[w]=[]
-	# # 	words[w].append(d)
-	# # word_list=[]
-	# # def_list=[]
-	# # for word in words:
-	# # 	word_list.append(word)
-	# # 	# def_list.append(random.choice(words[word]))
-	# # 	def_list.append(words[word][0])
+	# for w,d in zip(word_list,def_list):
+	# 	if w not in words:
+	# 		words[w]=[]
+	# 	words[w].append(d)
+	# word_list=[]
+	# def_list=[]
+	# for word in words:
+	# 	word_list.append(word)
+	# 	# def_list.append(random.choice(words[word]))
+	# 	def_list.append(words[word][0])
 
-	# maxlen=0
-	# minlen=100
-	# for defi in def_list:
-	# 	minlen=min(minlen,len(defi.split()))
-	# 	maxlen=max(maxlen,len(defi.split()))
-	# print(minlen)
-	# print(maxlen)
+	maxlen=0
+	minlen=100
+	for defi in def_list:
+		minlen=min(minlen,len(defi.split()))
+		maxlen=max(maxlen,len(defi.split()))
+	print(minlen)
+	print(maxlen)
 	maxlen=30
 
 	# # Initialize the "CountVectorizer" object, which is scikit-learn's
@@ -96,7 +96,6 @@ def load_text(n,num_samples=None):
 	# np.save('Xaoh',X)
 	# np.save('yaoh',y)
 	# np.save('maskaoh',mask)
-	# exit()
 	X=np.load('Xaoh.npy','r')
 	y=np.load('yaoh.npy','r')
 	mask=np.load('maskaoh.npy','r')
@@ -390,7 +389,7 @@ class VariationalAutoencoder(object):
 		# def train_decoder():
 		if form3:
 			_x,self.input_KLD_loss=self._get_input_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['variational_encoding'])
-			self.input_KLD_loss=tf.reduce_mean(self.input_KLD_loss)*KLD_penalty#\*tf.constant(0.0,dtype=tf.float32)
+			self.input_KLD_loss=tf.reduce_mean(self.input_KLD_loss)*KLD_penalty#*tf.constant(0.0,dtype=tf.float32)
 			# normed_embedding= tf.nn.l2_normalize(self.mid_var, dim=-1)
 			# normed_target=tf.nn.l2_normalize(self.word_var,dim=-1)
 			# cos_sim=(tf.reduce_sum(tf.multiply(normed_embedding,normed_target),axis=-1))
@@ -398,12 +397,10 @@ class VariationalAutoencoder(object):
 			# # # self.exp_loss=tf.reduce_sum(xentropy)/float(self.batch_size)
 			# self.other_loss += tf.reduce_mean(1-(cos_sim))*cos_penalty
 			# # other_loss+=tf.reduce_mean(tf.reduce_sum(tf.square(_x-input_embedding),axis=-1))*cos_penalty
-			# _x=tf.concat([input_embedding,_x],axis=-1)
-			# tempe=tf.Variable(xavier_init(self.network_architecture['n_lstm_input']*2,self.network_architecture['n_lstm_input']),name='emb_cat')
-			# tempb=tf.Variable(tf.zeros([self.network_architecture['n_lstm_input']]),name='emb_cat_b')
-			# _x=tf.matmul(_x,tempe)+tempb
-			# input_embedding=_x
-
+			_x=tf.concat([input_embedding,_x],axis=-1)
+			tempe=tf.Variable(xavier_init(self.network_architecture['n_lstm_input']*2,self.network_architecture['n_lstm_input']),name='emb_cat')
+			tempb=tf.Variable(tf.zeros([self.network_architecture['n_lstm_input']]),name='emb_cat_b')
+			_x=tf.matmul(_x,tempe)+tempb
 
 		# input_embedding=tf.cond(tf.equal(self.timestep%5,0),train_decoder,train_encoder)
 		# Use recognition network to determine mean and 
@@ -851,7 +848,7 @@ def train(network_architecture, learning_rate=0.001,
 		costs.append(avg_cost)
 		
 		# Display logs per epoch step
-		if epoch % (display_step) == 0 or epoch==1:
+		if epoch % (display_step*10) == 0 or epoch==1:
 			if should_save:
 				print 'saving'
 				vae.saver.save(vae.sess, os.path.join(model_path,'model'))
@@ -902,7 +899,7 @@ if __name__ == "__main__":
 		X, y, mask, _map = load_text(50000-3)
 	else:
 		X, y, mask, _map = load_text(50000-2)
-	n_input =50001
+	n_input =50000
 	n_samples = 30000
 	lstm_dim=int(sys.argv[7])
 	model_path = sys.argv[8]
@@ -930,7 +927,7 @@ if __name__ == "__main__":
 	if sys.argv[16]!='forward':
 		use_bdlstm=True
 		bdlstmtype='bdlstm'
-	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%s%sdefdef%soh.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(losstype),str(cliptype),str(vartype),str(transfertype))
+	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%s%sdefdef%s4.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(losstype),str(cliptype),str(vartype),str(transfertype))
 	all_samps=len(X)
 	n_samples=all_samps
 	# X, y = X[:n_samples, :], y[:n_samples, :]

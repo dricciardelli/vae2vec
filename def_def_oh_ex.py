@@ -23,51 +23,51 @@ def map_lambda():
 def rev_map_lambda():
 	return "<UNK>"
 def load_text(n,num_samples=None):
-	# # fname = 'Oxford_English_Dictionary.txt'
-	# # txt = []
-	# # with open(fname,'rb') as f:
-	# # 	txt = f.readlines()
+	# fname = 'Oxford_English_Dictionary.txt'
+	# txt = []
+	# with open(fname,'rb') as f:
+	# 	txt = f.readlines()
 
-	# # txt = [x.decode('utf-8').strip() for x in txt]
-	# # txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
+	# txt = [x.decode('utf-8').strip() for x in txt]
+	# txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
 
-	# # List of words
-	# # word_list = [x.split(' ', 1)[0].strip() for x in txt]
-	# # # List of definitions
-	# # def_list = [x.split(' ', 1)[1].strip()for x in txt]
-	# with open('./training_data/training_data.pkl','rb') as raw:
-	# 	word_list,dl=pkl.load(raw)
-	# def_list=[]	
-	# # def_list=[' '.join(defi) for defi in def_list]
-	# i=0
-	# # words={}
-	# while i<len( dl):
-	# 	defi=dl[i]
-	# 	if len(defi)>0:
-	# 		def_list+=[' '.join(defi)]
-	# 		i+=1
-	# 	else:
-	# 		dl.pop(i)
-	# 		word_list.pop(i)
+	# List of words
+	# word_list = [x.split(' ', 1)[0].strip() for x in txt]
+	# # List of definitions
+	# def_list = [x.split(' ', 1)[1].strip()for x in txt]
+	with open('./training_data/training_data.pkl','rb') as raw:
+		word_list,dl=pkl.load(raw)
+	def_list=[]	
+	# def_list=[' '.join(defi) for defi in def_list]
+	i=0
+	# words={}
+	while i<len( dl):
+		defi=dl[i]
+		if len(defi)>0:
+			def_list+=[' '.join(defi)]
+			i+=1
+		else:
+			dl.pop(i)
+			word_list.pop(i)
 
-	# # for w,d in zip(word_list,def_list):
-	# # 	if w not in words:
-	# # 		words[w]=[]
-	# # 	words[w].append(d)
-	# # word_list=[]
-	# # def_list=[]
-	# # for word in words:
-	# # 	word_list.append(word)
-	# # 	# def_list.append(random.choice(words[word]))
-	# # 	def_list.append(words[word][0])
+	# for w,d in zip(word_list,def_list):
+	# 	if w not in words:
+	# 		words[w]=[]
+	# 	words[w].append(d)
+	# word_list=[]
+	# def_list=[]
+	# for word in words:
+	# 	word_list.append(word)
+	# 	# def_list.append(random.choice(words[word]))
+	# 	def_list.append(words[word][0])
 
-	# maxlen=0
-	# minlen=100
-	# for defi in def_list:
-	# 	minlen=min(minlen,len(defi.split()))
-	# 	maxlen=max(maxlen,len(defi.split()))
-	# print(minlen)
-	# print(maxlen)
+	maxlen=0
+	minlen=100
+	for defi in def_list:
+		minlen=min(minlen,len(defi.split()))
+		maxlen=max(maxlen,len(defi.split()))
+	print(minlen)
+	print(maxlen)
 	maxlen=30
 
 	# # Initialize the "CountVectorizer" object, which is scikit-learn's
@@ -89,17 +89,17 @@ def load_text(n,num_samples=None):
 		num_samples=len(word_list)
 	# X = (36665, 56210)
 
-	# X = map_one_hot(word_list[:num_samples],_map,1,n)
-	# # y = (36665, 56210)
-	# # print _map
-	# y,mask = map_one_hot(def_list[:num_samples],_map,maxlen,n)
-	# np.save('Xaoh',X)
-	# np.save('yaoh',y)
-	# np.save('maskaoh',mask)
-	# exit()
-	X=np.load('Xaoh.npy','r')
-	y=np.load('yaoh.npy','r')
-	mask=np.load('maskaoh.npy','r')
+	X,to_drop = map_one_hot(word_list[:num_samples],_map,1,n)
+	# y = (36665, 56210)
+	# print _map
+	y,mask = map_one_hot(def_list[:num_samples],_map,maxlen,n,to_drop=to_drop)
+	np.save('Xaohex',X)
+	np.save('yaohex',y)
+	np.save('maskaohex',mask)
+	exit()
+	# X=np.load('Xaoh.npy','r')
+	# y=np.load('yaoh.npy','r')
+	# mask=np.load('maskaoh.npy','r')
 	print (np.max(y))
 	return X, y, mask,rev_map
 
@@ -194,7 +194,7 @@ def map_word_emb(corpus,_map):
 		return np.array(rtn),np.array(rtn2)
 	return np.array(rtn)
 
-def map_one_hot(corpus,_map,maxlen,n):
+def map_one_hot(corpus,_map,maxlen,n,to_drop=None):
 	if maxlen==1:
 		if not form2:
 			total_not=0
@@ -212,29 +212,44 @@ def map_one_hot(corpus,_map,maxlen,n):
 		else:
 			total_not=0
 			rtn=np.zeros([len(corpus)],dtype=np.float32)
+			rtn=[]
+			to_drop=[]
 			for l,line in enumerate(corpus):
 				if len(line)==0:
 					rtn[l,-1]=1
 				else:
 					mapped=_map[line]
-					if mapped==75001:
+					if mapped==n+1:
 						total_not+=1
-					rtn[l]=mapped
+					if mapped!=n+1:
+						rtn.append(mapped)
+					else:
+						to_drop.append(l)
 			print (total_not,len(corpus))
-			return rtn
+			return np.array(rtn,dtype=np.int32),to_drop
 	else:
+		num_samples=len(corpus)
+		if to_drop is not None:
+			num_samples-=len(to_drop)
 		if form2:
-			rtn=np.zeros([len(corpus),maxlen+2],dtype=np.float32)
+			rtn=np.zeros([num_samples,maxlen+2],dtype=np.float32)
 		else:
-			rtn=np.zeros([len(corpus),maxlen+2],dtype=np.int32)
+			rtn=np.zeros([num_samples,maxlen+2],dtype=np.int32)
 		print (rtn.shape)
-		mask=np.zeros([len(corpus),maxlen+2],dtype=np.float32)
+		mask=np.zeros([num_samples,maxlen+2],dtype=np.float32)
 		print (mask.shape)
 		mask[:,1]=1.0
 		totes=0
 		nopes=0
 		wtf=0
-		for l,_line in enumerate(corpus):
+		dropped=0
+		for _l,_line in enumerate(corpus):
+			if to_drop is not None and _l in to_drop:
+				if dropped%100==0:
+					print _l
+				dropped+=1
+				continue
+			l=_l-dropped
 			x=0
 			line=_line.split()
 			for i in range(min(len(line),maxlen-1)):
@@ -902,7 +917,7 @@ if __name__ == "__main__":
 		X, y, mask, _map = load_text(50000-3)
 	else:
 		X, y, mask, _map = load_text(50000-2)
-	n_input =50001
+	n_input =50000
 	n_samples = 30000
 	lstm_dim=int(sys.argv[7])
 	model_path = sys.argv[8]
@@ -930,7 +945,7 @@ if __name__ == "__main__":
 	if sys.argv[16]!='forward':
 		use_bdlstm=True
 		bdlstmtype='bdlstm'
-	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%s%sdefdef%soh.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(losstype),str(cliptype),str(vartype),str(transfertype))
+	loss_output_path= 'losses/%s%ss_%sb_%sl_%sh_%sd_%sz_%szm_%s%s%sdefdef%sohex.pkl'%(bdlstmtype,str(lstm_stack),str(batch_size),str(maxlen-2),str(lstm_dim),str(n_input),str(n_z),str(n_z_m),str(losstype),str(cliptype),str(vartype),str(transfertype))
 	all_samps=len(X)
 	n_samples=all_samps
 	# X, y = X[:n_samples, :], y[:n_samples, :]

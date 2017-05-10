@@ -23,40 +23,40 @@ def map_lambda():
 def rev_map_lambda():
     return "<UNK>"
 def load_text(n,capts,num_samples=None):
-    # fname = 'Oxford_English_Dictionary.txt'
-    # txt = []
-    # with open(fname,'rb') as f:
-    #   txt = f.readlines()
+    # # fname = 'Oxford_English_Dictionary.txt'
+    # # txt = []
+    # # with open(fname,'rb') as f:
+    # #   txt = f.readlines()
 
-    # txt = [x.decode('utf-8').strip() for x in txt]
-    # txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
+    # # txt = [x.decode('utf-8').strip() for x in txt]
+    # # txt = [re.sub(r'[^a-zA-Z ]+', '', x) for x in txt if len(x) > 1]
 
-    # List of words
-    # word_list = [x.split(' ', 1)[0].strip() for x in txt]
-    # # List of definitions
-    # def_list = [x.split(' ', 1)[1].strip()for x in txt]
-    with open('./training_data/training_data.pkl','rb') as raw:
-        word_list,dl=pkl.load(raw)
-    def_list=[] 
-    # def_list=[' '.join(defi) for defi in def_list]
-    i=0
-    while i<len( dl):
-        defi=dl[i]
-        if len(defi)>0:
-            def_list+=[' '.join(defi)]
-            i+=1
-        else:
-            dl.pop(i)
-            word_list.pop(i)
+    # # List of words
+    # # word_list = [x.split(' ', 1)[0].strip() for x in txt]
+    # # # List of definitions
+    # # def_list = [x.split(' ', 1)[1].strip()for x in txt]
+    # with open('./training_data/training_data.pkl','rb') as raw:
+    #     word_list,dl=pkl.load(raw)
+    # def_list=[] 
+    # # def_list=[' '.join(defi) for defi in def_list]
+    # i=0
+    # while i<len( dl):
+    #     defi=dl[i]
+    #     if len(defi)>0:
+    #         def_list+=[' '.join(defi)]
+    #         i+=1
+    #     else:
+    #         dl.pop(i)
+    #         word_list.pop(i)
 
 
-    maxlen=0
-    minlen=100
-    for defi in def_list:
-        minlen=min(minlen,len(defi.split()))
-        maxlen=max(maxlen,len(defi.split()))
-    print(minlen)
-    print(maxlen)
+    # maxlen=0
+    # minlen=100
+    # for defi in def_list:
+    #     minlen=min(minlen,len(defi.split()))
+    #     maxlen=max(maxlen,len(defi.split()))
+    # print(minlen)
+    # print(maxlen)
     maxlen=30
 
     # # Initialize the "CountVectorizer" object, which is scikit-learn's
@@ -288,11 +288,10 @@ class Caption_Generator():
         if init_b is not None:
             self.word_encoding_bias = tf.Variable(init_b, name='word_encoding_bias')
         else:
-            self.word_encoding_bias = tf.Variable(tf.zeros([self.n_z]), name='word_encoding_bias')
-
+            self.word_encoding_bias = tf.Variable(tf.zeros([self.n_input]), name='word_encoding_bias')
         with tf.device('/cpu:0'):
-            self.embw=tf.Variable(xavier_init(self.n_input,self.dim_hidden),name='embw')
-        self.embb=tf.Variable(tf.zeros([self.dim_hidden]),name='embb')
+            self.embw=tf.Variable(xavier_init(self.n_input,self.n_z),name='embw')
+        self.embb=tf.Variable(tf.zeros([self.n_z]),name='embb')
         self.all_encoding_weights=[self.embw,self.embb]
 
     def build_model(self):
@@ -312,14 +311,14 @@ class Caption_Generator():
 
         #leverage one-hot sparsity to lookup embeddings fast
         embedded_input,KLD_loss=self._get_word_embedding([network_weights['variational_encoding'],network_weights['biases_variational_encoding']],network_weights['input_meaning'],flat_caption_placeholder,logit=True)
-        
         KLD_loss=tf.multiply(KLD_loss,tf.reshape(mask,[-1,1]))
         KLD_loss=tf.reduce_sum(KLD_loss)
         # word_embeddings=tf.matmul(embedded_input,self.word_embedding)+self.embedding_bias
-        with tf.device('/cpu:0'):
-            word_embeddings=tf.nn.embedding_lookup(self.embw,flat_caption_placeholder)
-        word_embeddings+=self.embb
-        word_embeddings=tf.reshape(word_embeddings,[self.batch_size,self.n_lstm_steps,-1])
+        # with tf.device('/cpu:0'):
+        #     word_embeddings=tf.nn.embedding_lookup(self.embw,flat_caption_placeholder)
+        # word_embeddings+=self.embb
+        # word_embeddings=tf.reshape(word_embeddings,[self.batch_size,self.n_lstm_steps,-1])
+        embedded_input=tf.stop_gradient(embedded_input)
         embedded_input=tf.reshape(embedded_input,[self.batch_size,self.n_lstm_steps,-1])
         embedded_input=tf.nn.l2_normalize(embedded_input,dim=-1)
         #initialize lstm state
@@ -372,6 +371,7 @@ class Caption_Generator():
         total_loss+=KLD_loss/tf.reduce_sum(mask)
         return total_loss, img,  caption_placeholder, mask
 
+
     def build_generator(self, maxlen, batchsize=1,from_image=False):
         #same setup as `build_model` function
 
@@ -385,23 +385,23 @@ class Caption_Generator():
             # in the first iteration we have no previous word, so we directly pass in the image embedding
             # and set the `previous_word` to the embedding of the start token ([0]) for the future iterations
             output, state = self.lstm(image_embedding, state)
-            previous_word = tf.nn.embedding_lookup(self.word_embedding, [0]) + self.embedding_bias
+            # previous_word = tf.nn.embedding_lookup(self.word_embedding, [0]) + self.embedding_bias
 
             for i in range(maxlen):
                 tf.get_variable_scope().reuse_variables()
 
-                out, state = self.lstm(previous_word, state)
+                out, state = self.lstm(image_embedding, state)
 
 
                 # get a get maximum probability word and it's encoding from the output of the LSTM
                 logit = tf.matmul(out, self.word_encoding) + self.word_encoding_bias
                 best_word = tf.argmax(logit, 1)
 
-                with tf.device("/cpu:0"):
-                    # get the embedding of the best_word to use as input to the next iteration of our LSTM 
-                    previous_word = tf.nn.embedding_lookup(self.word_embedding, best_word)
+                # with tf.device("/cpu:0"):
+                #     # get the embedding of the best_word to use as input to the next iteration of our LSTM 
+                #     previous_word = tf.nn.embedding_lookup(self.word_embedding, best_word)
 
-                previous_word += self.embedding_bias
+                # previous_word += self.embedding_bias
 
                 all_words.append(best_word)
         self.img=img
@@ -461,7 +461,7 @@ class Caption_Generator():
                 all_the_f_one_h.append(tf.one_hot(x,depth=self.n_input))
 
         embedding=tf.matmul(z,self.word_embedding)+self.embedding_bias
-        embedding=z
+        # embedding=z
         return embedding,vae_loss
     def _vae_sample(self, weights, biases, x, lookup=False):
             #TODO: consider adding a linear transform layer+relu or softplus here first 
@@ -613,7 +613,7 @@ def train(learning_rate=0.001, continue_training=False):
     saver = tf.train.Saver(max_to_keep=100)
     train_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
     tf.global_variables_initializer().run()
-    tf.train.Saver(var_list=caption_generator.all_encoding_weights,max_to_keep=100).restore(sess,tf.train.latest_checkpoint('modelsvardefdefvarall'))
+    tf.train.Saver(var_list=caption_generator.all_encoding_weights,max_to_keep=100).restore(sess,tf.train.latest_checkpoint('./models/tensorflow'))
     if continue_training:
         saver.restore(sess,tf.train.latest_checkpoint(model_path))
     losses=[]
@@ -660,7 +660,7 @@ def train(learning_rate=0.001, continue_training=False):
             i+=1
             print losses[-1]
         print("Saving the model from epoch: ", epoch)
-        pkl.dump(losses,open('losses/loss_e2e.pkl','wb'))
+        pkl.dump(losses,open('losses/loss_n2e.pkl','wb'))
         saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
         learning_rate *= 0.95
 def test(sess,image,generated_words,ixtoword,idx=0): # Naive greedy search
@@ -685,14 +685,14 @@ def test(sess,image,generated_words,ixtoword,idx=0): # Naive greedy search
 
 if __name__=='__main__':
 
-    model_path = './models/tensorflowocs'
+    model_path = './models/tensorflow_n2ecs'
     feature_path = './data/feats.npy'
     annotation_path = './data/results_20130124.token'
     import sys
     feats, captions = get_data(annotation_path, feature_path)
-    n_input=50001
+    n_input=50000
     binary_dim=n_input
-    n_lstm_input=512
+    n_lstm_input=256
     n_z=256
     zero_end_tok=True
     form2=True

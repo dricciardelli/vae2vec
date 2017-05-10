@@ -632,7 +632,7 @@ def train(learning_rate=0.001, continue_training=False):
     saver = tf.train.Saver(max_to_keep=100)
     train_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
     tf.global_variables_initializer().run()
-    tf.train.Saver(var_list=caption_generator.all_encoding_weights,max_to_keep=100).restore(sess,tf.train.latest_checkpoint('modelsvardefdefvarall'))
+    tf.train.Saver(var_list=caption_generator.all_encoding_weights,max_to_keep=100).restore(sess,tf.train.latest_checkpoint('./models/tensorflow'))
     if continue_training:
         saver.restore(sess,tf.train.latest_checkpoint(model_path))
     losses=[]
@@ -704,7 +704,7 @@ def test(sess,image,generated_words,ixtoword,idx=0): # Naive greedy search
 
 if __name__=='__main__':
 
-    model_path = './models/tensorflow'
+    model_path = './models/tensorflow_e2e_adv'
     feature_path = './data/feats.npy'
     annotation_path = './data/results_20130124.token'
     import sys
